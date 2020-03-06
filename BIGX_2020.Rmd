@@ -2,15 +2,7 @@
 title: "BIGX_Analysis_2020" 
 author: Nikita Telkar 
 date: "March 3, 2020"
-output: 
-  html_document: 
-    keep_md: yes 
-    toc: true 
-    toc_float: 
-      collapsed: true 
-      smooth_scroll: true 
-    theme: flatly  #cerulean, journal, flatly, darkly, readable, spacelab, united, cosmo, lumen, paper, sandstone, simplex, and yeti
-    highlight: zenburn  
+output: github_document
 #tango, pygments, kate, monochrome, espresso, zenburn, haddock, textmate. 
 ---  
 
