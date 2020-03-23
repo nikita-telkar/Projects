@@ -1,0 +1,337 @@
+---
+title: "1_2_miRNA_differential_expression / BIGX 2020 Analysis" 
+author: Nikita Telkar 
+date: "March 3, 2020"
+output: 
+  html_document: 
+    keep_md: yes 
+    toc: true 
+    toc_float: 
+      collapsed: true 
+      smooth_scroll: true 
+    theme: flatly  #cerulean, journal, flatly, darkly, readable, spacelab, united, cosmo, lumen, paper, sandstone, simplex, and yeti
+    highlight: zenburn  
+#tango, pygments, kate, monochrome, espresso, zenburn, haddock, textmate. 
+---
+
+Aka BIGX_Analysis
+
+### 1.0 Data  
+
+#### 1.1 Loading Libraries  
+
+```{r echo=TRUE, message=FALSE, include=FALSE, r, error=FALSE}
+library(rmarkdown)
+# library(installr)
+library(dplyr) 
+library(tidyr) 
+library(readxl) 
+library(DT) 
+library(knitr) 
+library(kableExtra) 
+library(ggplot2)
+library(tidyverse)
+library(devtools)
+library(magrittr)
+library(arsenal)
+library(here)
+library(limma)
+```
+
+```{r}
+
+eDat_norows <- read_excel ("Z:/Nikita/Projects/snc_placenta/data/processed/snc_placenta_rob_eDat.xlsx", col_names = TRUE)
+colnames (eDat_norows)[1] <- "sample"
+eDat <- eDat_norows %>% 
+  column_to_rownames(var = "sample")
+t_e_norows <- as.data.frame(t(eDat_norows))
+miRNA <- row.names(eDat)
+colnames (t_e_norows) <- miRNA
+t_e_norows <- t_e_norows [-1,]
+t_e_norows <- rownames_to_column(t_e_norows, var ="sample")
+
+pDat <- read_excel ("Z:/Nikita/Projects/snc_placenta/data/processed/snc_placenta_rob_pDat.xlsx", col_names = TRUE)
+pDat <- pDat [, -1]
+```
+
+
+#### 1.2 Phenotype Info:  
+
+```{r, warning=FALSE, results= "asis"}
+sum_stats <- pDat[c(6,9,10,28)]
+tab1 <- tableby(trimester~., data = sum_stats, test =FALSE) #package: arsenal --> cannot use with %>% 
+summary (tab1, title ="Breakdown of Samples by Trimester")
+  
+```  
+
+#### 1.3 Genotype Info:  
+
+```{r eval=FALSE, error=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+library(devtools)
+install_github("vqv/ggbiplot")
+
+library(ggbiplot)
+library(limma)
+
+#str(eDat)
+
+t_edat <-t_edat %>% 
+  mutate_all(funs(as.character)) %>% 
+  mutate_all(funs(as.numeric))
+rn2 <- colnames(eDat)
+rn2 <- rn2[c(-1)]
+row.names(t_edat) <- rn2
+
+paged_table(t_edat)
+
+
+(pDat$sample == names(t_edat)) %>% all() #CHECKING TO MAKE SURE THAT SAMPLE IDS ARE IN ORDER
+
+desmat_cond <- model.matrix(~condition, pDat) #linear modelling on condition --> controls vs NTD
+
+con_mat <- lmFit(t_edat, desmat_cond)
+
+con_mat_eb <- eBayes(con_mat)
+
+diff_condition_genes <- topTable(con_mat_eb, n = Inf)
+
+
+
+#Controlling for Sex
+
+desmat_cond_sex <- model.matrix(~condition + sex, pDat) #conditionmodel controlling for sex
+
+con_sex_mat <- lmFit(t_edat, desmat_cond_sex)
+
+con_sex_mat_eb <- eBayes(con_sex_mat)
+
+con_sex_mat_genes <- topTable(con_sex_mat_eb, n = Inf)
+
+
+#Controlling for GA
+
+desmat_cond_ga <- model.matrix(~condition + GA, pDat) #condition model controlling for GA
+
+con_ga_mat <- lmFit(t_edat, desmat_cond_ga)
+
+con_ga_mat_eb <- eBayes(con_ga_mat)
+
+con_ga_mat_genes <- topTable(con_ga_mat_eb, n = Inf, adjust.method = "fdr", sort.by="B", resort.by = "logFC")
+
+```
+
+### 2.0 Analysis  
+
+#### 2.1 Controls vs NTDs in Trimester 2 samples  
+(Univariate Analysis)  
+
+Considering only Trimester 2 Samples:  
+
+```{r}
+tri2p <- pDat %>% #trimester 2 phenotype
+  filter (trimester == "2")
+
+tri2 <- as.character(tri2p$sample) #select sample names of trimester 2 --> make value
+
+#tri2g <- eDat %>%   #this dropped the trimester 2 samples and kept the trimester 1 and 3 --> we want the opposite
+ # modify_at(tri2,~NULL)
+
+tri2g <- eDat %>% 
+  select(which(names(eDat) %in% tri2))
+
+(tri2p$sample == names(tri2g)) %>% all()
+
+tri2_mat <- model.matrix(~condition + sex, tri2p) #desmat for trimester 2 samples modelling for condition controllinf for sex
+
+tri2_mat_sex <- lmFit(tri2g, tri2_mat)
+
+tri2_mat_eb <- eBayes(tri2_mat_sex)
+
+diff_tri_sex <- topTable(tri2_mat_eb, n = Inf, adjust.method = "fdr", p.value = 0.05) 
+paged_table(diff_tri_sex) #control is the reference --> logFC value means it is downregulated in NTDs
+```  
+
+Now here, we need to specify that we want to consider **condition** as our variable or `coefficient` of interest. Otherwise, the function relies on the default intercept which would give us different results:  
+
+```{r}
+diff_tri_sex <- topTable(tri2_mat_eb, n = Inf, adjust.method = "fdr", coef = 2, p.value = 0.05) #specifying variable of interest as control/NTD from tri2_mat column 2
+paged_table(diff_tri_sex)
+```
+
+***
+
+#### 2.2 Sex-Differential Genes for the 2nd and 3rd trimester  
+(Multivariate Analysis):  
+
+```{r}
+
+tri23p <- pDat %>% 
+  filter (!trimester == "1")
+
+tri23 <- as.character(tri23p$sample) 
+
+tri23g <- eDat %>% 
+  select(which(names(eDat) %in% tri23))
+
+(tri23p$sample == names(tri23g)) %>% all()
+
+tri23_mat <- model.matrix(~sex + trimester, tri23p) #desmat for trimester 2 and 3 samples modelling for sex controlling by trimester --> GA doesn't work since matrix larger than no of samples, and no residual degress of freedom
+
+tri23genes_sex <- lmFit(tri23g, tri23_mat) %>% 
+  eBayes()
+
+tri23_list <- topTable(tri23genes_sex, n = Inf, adjust.method = "fdr", coef = 2, p.value = 0.05) #differentially expressed by sex in trimester 2 and 3 in controls and NTDs
+paged_table(tri23_list)
+
+tri23_list_tri3 <- topTable(tri23genes_sex, n = Inf, adjust.method = "fdr", coef = 3, p.value = 0.05) #differentially expressed in trimester 3 in controls and NTDs
+nrow(tri23_list_tri3)
+paged_table(tri23_list_tri3)
+
+decideTests(tri23genes_sex, adjust.method = "fdr", p.value = 0.05) %>% 
+  summary()
+```  
+
+##### 2.2.1 Applying Contrasts  
+
+Making **contrasts** manually as opposed to implicit determinimation using `lmFit`:  
+
+```{r, include=FALSE, eval=FALSE}
+tri23_mat_contrast <- model.matrix(~tri23p$sex -1)
+#matrix
+colnames(tri23_mat_contrast) <- c("Female", "Male")
+
+tri23_sex_contrast <- lmFit(tri23g, tri23_mat_contrast) #fit the matrix to the model
+
+tri23_contrats_mat <- makeContrasts(sexx_diff = Female - Male, levels = tri23_mat_contrast) #make the contrats for the model
+
+tri23_contrast <- contrasts.fit(tri23_sex_contrast, tri23_contrats_mat) %>% 
+  eBayes() #fit the contrast matrix to the earlier lmfit
+
+tri23_contrast_genes <- topTable(tri23_contrast, n = Inf, adjust.method = "fdr", p.value = 0.05) 
+paged_table(tri23_contrast_genes)
+
+```  
+
+However, since there is only variable we're considering above (**sex**), we don't really need to use a contrast matrix. (Specifying `coef = 2`  in `tri23genes_sex` doesn't make a difference since there is only one variable and we aren't controlling for confoudnders or covariates)   
+
+```{r}
+tri23_list <- topTable(tri23genes_sex, n = Inf, adjust.method = "fdr", p.value = 0.05)
+paged_table(tri23_list)
+```  
+
+
+##### 2.2.2 Comparing `lmFit` and `contrasta.fit`  
+
+Now, if we actually applied the same `coef` fucntion to consider *sex* as the variable of interest in the **Controls vs NTDs in Trimester 2 samples** analysis above, we get the same significantly differentially expressed miRNA by sex as when looking at **Sex-Differential Genes in Trimester 2 and 3**:  
+
+```{r}
+diff_tri_sex <- topTable(tri2_mat_eb, n = Inf, adjust.method = "fdr", coef = 3, p.value = 0.05)
+paged_table(diff_tri_sex)
+```  
+
+***  
+
+
+#### 2.3 Differential miRNA by Trimester in Controls  
+
+```{r}
+
+controls_p <- pDat %>% 
+  filter (condition == "con")
+
+control_samp <- as.character(controls_p$sample) 
+
+control_g <- eDat %>% 
+  select(which(names(eDat) %in% control_samp))
+
+(controls_p$sample == names(control_g)) %>% all()
+
+controls_mat <- model.matrix(~trimester + sex, controls_p) #desmat for all controls modelling for trimester controlling by sex 
+
+controls_genes <- lmFit(control_g, controls_mat) %>% 
+  eBayes()
+
+
+decideTests(controls_genes, adjust.method = "fdr", p.value = 0.05) %>% #total number of differentially expressed genes at fdr 0f 0.05 and a pvalue of 0.05
+  summary() 
+
+decideTests(controls_genes, adjust.method = "fdr", p.value = 0.01) %>% #total number of differentially expressed genes at fdr 0f 0.05 and a pvalue of 0.05
+  summary() 
+
+hist(controls_genes$p.value)
+
+
+controls_tri2_list <- topTable(controls_genes, n = Inf, adjust.method = "fdr", coef = 2, p.value = 0.05, sort.by = "logFC") #pulling out genes differentially expressed in controls at trimester 2
+nrow(controls_tri2_list)
+paged_table(controls_tri2_list)
+
+controls_tri3_list <- topTable(controls_genes, n = Inf, adjust.method = "fdr", coef = 3, p.value = 0.05, sort.by = "logFC") # pulling out genes differentially expressed in controls at trimester 3
+nrow(controls_tri3_list)
+paged_table(controls_tri3_list) #logFC value too high 
+
+controls_sex_list <- topTable(controls_genes, n = Inf, adjust.method = "fdr", coef = 4, p.value = 0.05) #genes differentially expressed in controls by sex --> none?
+controls_sex_list
+
+
+```  
+
+##### 2.3.3 Volcano Plot  
+
+```{r}
+
+dtp <- topTable(controls_genes, n = Inf, adjust.method = "fdr", coef = 2, sort.by = "logFC")#all genes df exps in con at t2
+#dtp <- tail(dtp, -23) 
+
+#dtp$log <- 2^dtp$logFC
+dtp$type <-  as.character("not significant") # create a new "type" column and fill it with repeating "not significant" entry
+
+# set those values which qualify as "up" or "down" in the "type" column of dtp based on p Value and +/- value of fold change
+dtp$type[which(dtp$adj.P.Val < 0.05 & dtp$logFC > 0.1)] = "upregulated"
+dtp$type[which(dtp$adj.P.Val < 0.05 & dtp$logFC < (-0.1) )] = "downregulated"
+dtp$type = as.factor(dtp$type)
+levels(dtp$type)
+
+sum(dtp$type == "upregulated") #19
+sum(dtp$type == "downregulated") #78
+sum(dtp$type == "not significant") #28801
+
+ggplot(data = dtp, aes(x = logFC, y=-log10(adj.P.Val), color = type)) + 
+  geom_point(shape=19, alpha=0.6, size=1.5) + # change size, shape, and intensity of scatterplot points
+  #theme_classic() + # personal preference!
+  #geom_vline(xintercept=c(-2,2), color = "slategray") + # add logFC 2 intercept  
+  geom_hline(yintercept=c(-log10(0.05)), color = "slategray") + # add FDR 0.05 visual threshold 
+  xlab("Fold Change") +
+  ylab("-log10(adjusted P Value)") 
+  #scale_colour_manual(values=c("#16d902", "#cc2a02", "black"), guide=F)  # change colour values to correspond with data
+  #coord_cartesian(xlim = c(-0.25, 0.25), ylim = c(-1,50)) # change limits of x and y axis
+```  
+
+Plotting `pred-kno-miR-10871-3p`:
+
+```{r}
+
+top_hit <- t_e_norows %>% 
+  select("sample", "pred-kno-miR-10871-3p") %>% 
+  as.data.frame()
+
+colnames (top_hit) [2] <- "miRNA"
+
+str(top_hit)
+
+top_hit$miRNA <- as.character(top_hit$miRNA)
+top_hit$miRNA <- as.numeric(top_hit$miRNA)
+
+top_hit <- top_hit %>% 
+  mutate(log = log10(miRNA))
+
+ggplot (data = top_hit, aes (x = sample, y = miRNA, fill =sample)) +
+  geom_bar( stat = "identity") +
+  theme(axis.text.x = element_text(angle = 90)) +
+  theme(legend.position = "none") +
+  labs (x ="Sample", y = "Reads per Million")
+  #coord_cartesian(ylim= c(0,6))
+```
+
+
+
+
