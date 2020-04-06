@@ -1,17 +1,8 @@
 ---
-title: "Novel miRNAs" 
-author: Nikita Telkar 
+title: "Novel miRNAs"
+author: "Nikita Telkar"
 date: "December 16, 2019"
-output: 
-  html_document: 
-    keep_md: yes 
-    toc: true 
-    toc_float: 
-      collapsed: true 
-      smooth_scroll: true 
-    theme: flatly  #cerulean, journal, flatly, darkly, readable, spacelab, united, cosmo, lumen, paper, sandstone, simplex, and yeti
-    highlight: zenburn  
-#tango, pygments, kate, monochrome, espresso, zenburn, haddock, textmate. 
+output: github_document
 --- 
  
 ## Data Loading and Visualisation:  
@@ -31,6 +22,7 @@ library(devtools)
 library(magrittr)
 library(arsenal)
 library(xlsx)
+library(tinytex)
 ```
 ***
 Reading in the `novel` and the `predicted` miRNA files:  
@@ -133,7 +125,7 @@ pred_score <- pred_score %>%
   mutate_at(vars(probability), funs(probability * 100)) %>% 
   mutate_at(vars(probability), funs(paste(probability, "%", sep ="")))
 
-paged_table(pred_score)
+table(pred_score)
 ```  
 
 Depicting the above table as a plot:  
