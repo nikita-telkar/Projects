@@ -2,16 +2,7 @@
 title: "1_2_miRNA_differential_expression / BIGX 2020 Analysis" 
 author: Nikita Telkar 
 date: "March 3, 2020"
-output: 
-  html_document: 
-    keep_md: yes 
-    toc: true 
-    toc_float: 
-      collapsed: true 
-      smooth_scroll: true 
-    theme: flatly  #cerulean, journal, flatly, darkly, readable, spacelab, united, cosmo, lumen, paper, sandstone, simplex, and yeti
-    highlight: zenburn  
-#tango, pygments, kate, monochrome, espresso, zenburn, haddock, textmate. 
+output: github_document
 ---
 
 Aka BIGX_Analysis

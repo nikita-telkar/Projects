@@ -3,15 +3,15 @@ title: "BIGX_Analysis_2020"
 author: Nikita Telkar 
 date: "March 3, 2020"
 #always_allow_html: true
-output:
-  html_document:
-    keep_md: yes
-    toc: true
-    toc_float:
-      collapsed: true
-      smooth_scroll: true
-    theme: cosmo
-    highlight: zenburn 
+output: github_document
+#  html_document:
+ #   keep_md: yes
+  #  toc: true
+   # toc_float:
+    #  collapsed: true
+     # smooth_scroll: true
+    # theme: cosmo
+   # highlight: zenburn 
 #tango, pygments, kate, monochrome, espresso, zenburn, haddock, textmate. 
 ---  
 
@@ -215,7 +215,6 @@ rn2 <- colnames(eDat)
 rn2 <- rn2[c(-1)]
 row.names(t_edat) <- rn2
 
-paged_table(t_edat)
 
 
 (pDat$sample == names(t_edat)) %>% all() #CHECKING TO MAKE SURE THAT SAMPLE IDS ARE IN ORDER
@@ -279,14 +278,14 @@ tri2_mat_sex <- lmFit(tri2g, tri2_mat)
 tri2_mat_eb <- eBayes(tri2_mat_sex)
 
 diff_tri_sex <- topTable(tri2_mat_eb, n = Inf, adjust.method = "fdr", p.value = 0.05) 
-paged_table(diff_tri_sex) #control is the reference --> logFC value means it is downregulated in NTDs
+table(diff_tri_sex) #control is the reference --> logFC value means it is downregulated in NTDs
 ```  
 
 Now here, we need to specify that we want to consider **condition** as our variable or `coefficient` of interest. Otherwise, the function relies on the default intercept which would give us different results:  
 
 ```{r}
 diff_tri_sex <- topTable(tri2_mat_eb, n = Inf, adjust.method = "fdr", coef = 2, p.value = 0.05) #specifying variable of interest as control/NTD from tri2_mat column 2
-paged_table(diff_tri_sex)
+table(diff_tri_sex)
 ```
 
 ***
@@ -312,11 +311,11 @@ tri23genes_sex <- lmFit(tri23g, tri23_mat) %>%
   eBayes()
 
 tri23_list <- topTable(tri23genes_sex, n = Inf, adjust.method = "fdr", coef = 2, p.value = 0.05) #differentially expressed by sex in trimester 2 and 3 in controls and NTDs
-paged_table(tri23_list)
+table(tri23_list)
 
 tri23_list_tri3 <- topTable(tri23genes_sex, n = Inf, adjust.method = "fdr", coef = 3, p.value = 0.05) #differentially expressed in trimester 3 in controls and NTDs
 nrow(tri23_list_tri3)
-paged_table(tri23_list_tri3)
+table(tri23_list_tri3)
 ```  
 
 Making **contrasts** manually as opposed to implicit determinimation using `lmFit`:  
@@ -334,7 +333,7 @@ tri23_contrast <- contrasts.fit(tri23_sex_contrast, tri23_contrats_mat) %>%
   eBayes() #fit the contrast matrix to the earlier lmfit
 
 tri23_contrast_genes <- topTable(tri23_contrast, n = Inf, adjust.method = "fdr", p.value = 0.05) 
-paged_table(tri23_contrast_genes)
+table(tri23_contrast_genes)
 #summary(decideTests(tri23_contrast_genes))
 ```  
 
@@ -342,14 +341,14 @@ However, since there is only variable we're considering above (**sex**), we don'
 
 ```{r}
 tri23_list <- topTable(tri23genes_sex, n = Inf, adjust.method = "fdr", p.value = 0.05)
-paged_table(tri23_list)
+table(tri23_list)
 ```  
 
 Now, if we actually applied the same `coef` fucntion to consider *sex* as the variable of interest in the **Controls vs NTDs in Trimester 2 samples** analysis above, we get the same significantly differentially expressed miRNA by sex as when looking at **Sex-Differential Genes in Trimester 2 and 3**:  
 
 ```{r}
 diff_tri_sex <- topTable(tri2_mat_eb, n = Inf, adjust.method = "fdr", coef = 3, p.value = 0.05)
-paged_table(diff_tri_sex)
+table(diff_tri_sex)
 ```  
 
 ***  
@@ -376,11 +375,11 @@ controls_genes <- lmFit(control_g, controls_mat) %>%
 
 controls_tri2_list <- topTable(controls_genes, n = Inf, adjust.method = "fdr", coef = 2, p.value = 0.05) #genes differentially expressed in controls at trimester 2
 nrow(controls_tri2_list)
-paged_table(controls_tri2_list)
+table(controls_tri2_list)
 
 controls_tri3_list <- topTable(controls_genes, n = Inf, adjust.method = "fdr", coef = 3, p.value = 0.05) #genes differentially expressed in controls at trimester 3
 nrow(controls_tri3_list)
-paged_table(controls_tri3_list)
+table(controls_tri3_list)
 
 controls_sex_list <- topTable(controls_genes, n = Inf, adjust.method = "fdr", coef = 4, p.value = 0.05) #genes differentially expressed in controls by sex --> none?
 controls_sex_list
