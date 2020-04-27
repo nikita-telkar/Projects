@@ -1,3 +1,3 @@
 ### Projects
 
-A few of my R analysis scripts
+My analysis scripts for a few of my projects. :rainbow:
