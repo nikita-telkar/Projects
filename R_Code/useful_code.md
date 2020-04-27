@@ -11,6 +11,18 @@ output:
 ---
 
 
+
+***  
+
+**General Help:**  
+
+https://notebooks.azure.com/kenandirek/libraries/r-intro
+
+https://www.personality-project.org/r/r.commands.html
+
+https://www.datacamp.com/community/tutorials/r-data-import-tutorial#txt
+  
+  
 ***
 **Data Types:** https://swcarpentry.github.io/r-novice-inflammation/13-supp-data-structures/
 
@@ -58,20 +70,20 @@ datatable()
 
 #### **Transpose Data: Interchange rows and columns**  
 ```
-df <- t(df)  #Imp: Changes data type
+dataframe <- t(dataframe)  #Imp: Changes data type
 ```
 ***
 
 
 #### **Printing**
 ```
-print(raw_miRNA[2:28, 1], n = 27)
+print(dataframe[2:28, 1], n = 27)
 ```  
   Or  
 ```
 #alt way to print --> convert into separate variable and print
-var <- raw_miRNA[2:28, 1]       
-print(as_tibble(var), n = 27)
+dataframe_2 <- dataframe[2:28, 1]       
+print(as_tibble(dataframe_2), n = 27)
 ```  
 Or  
 ```
@@ -83,17 +95,19 @@ paged_table() #best table display when datatable() is too heavy to be processed
 
 #### **Return unique elements**  
 ```
-unique(t_raw3[,1]) #data type is character  
+unique(dataframe[,1]) #data type is character  
                       #include [] inside of ()
 ```
 ***
 
 #### **Deleting/Selecting columns/rows**  
 ```
-sub_ti <- t_mi [c(1:4)]   #select first 4 columns
-sub_ti <- head(sub_ti, 10)   #select first 10 rows
-sub_ti <- tail(sub_ti, -10)   #delete first 10 rows
-sub_ti <- head(sub_ti, -10)   #delete last 10 rows
+dataframe_2 <- dataframe[c(1:4)]   #select first 4 columns
+dataframe_2 <- head(dataframe, 10)   #select first 10 rows
+dataframe_2 <- tail(dataframe, -10)   #delete first 10 rows
+dataframe_2 <- head(dataframe, -10)   #delete last 10 rows
+
+dataframe_2 <- dataframe[!dataframe$tissue="brain",] #delete samples containing the word "brain" in column "tissue"
 
 ```
 ***
@@ -101,12 +115,58 @@ sub_ti <- head(sub_ti, -10)   #delete last 10 rows
 #### **Finding Values from one in another**  
 
 ```
-meta_dat$caseID[meta_dat$caseID %in% samp$Case_ID]
+dataframe$caseID[dataframe$caseID %in% dataframe_2$Case_ID]
 ``` 
 
 Negation:
 ```
-meta_dat$caseID[!meta_dat$caseID %in% samp$Case_ID]
+dataframe$caseID[!dataframe$caseID %in% dataframe_2$Case_ID]
 
 ```
 ***
+
+#### **Renaming**  
+
+Row based on column names:  
+```
+colnames(GLGC_S9) = GLGC_S9[1, ]  
+
+names(dataframe)[3]<-"new_name"
+names(dataframe) <- c("new_name", "another_new_name")  
+
+```
+
+When the above doesn't work for whatever reason, save the names as a character value, and then apply:  
+
+```
+names_df <- colnames(dataframe)
+row.names (dataframe_2) <- names_df
+```  
+
+***
+
+#### **Merging**  
+
+```
+dataframe$chromosome <- paste(dataframe$chr, dataframe$position, sep="_")  #make new column containing chromosome and position info, separated by "_" e.g. chr4_1908876
+```  
+
+***
+
+#### **Reordering / Rearranging**  
+
+```
+dataframe <- arrange(pvalue, logFC) #arrange according to ascending order by column pvalue and then by column logFC  
+
+dataframe <- arrange(desc(pvalue,)) #arrange in descending order  
+
+dataframe <- dataframe[, c(5, 4, 1, 2, 3)]  #reorder columns
+
+dataframe <- select(c("sample", tissue", "pvalue")) #keep only these 3 columns  
+```
+http://www.sthda.com/english/wiki/reordering-data-frame-columns-in-r  
+https://jules32.github.io/2016-07-12-Oxford/dplyr_tidyr/   
+
+
+***
+
