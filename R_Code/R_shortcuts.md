@@ -55,4 +55,20 @@ Ctrl + Alt + R
 #### **Text on new line**  
 Insert two spaces at the end of the line
 
+***  
+
+#### **Switching R windows**  
+
+Switching to source  
+
+```
+Ctrl + 1
+```  
+
+Switching to console  
+
+```
+Ctrl + 2
+```  
+
 ***
