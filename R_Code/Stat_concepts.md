@@ -9,9 +9,13 @@ theme: cosmo
 
 ***  
 
-```{r, echo=FALSE}
-library(rmarkdown)
-library(knitr)
+
+```
+## Warning: package 'rmarkdown' was built under R version 3.6.3
+```
+
+```
+## Warning: package 'knitr' was built under R version 3.6.3
 ```
 
 
@@ -22,10 +26,7 @@ library(knitr)
 
 Drawback: May not accurately describe the variability of the counts.  
 
-```{r, echo=FALSE}
-knitr::include_graphics("https://i2.wp.com/www.theanalysisfactor.com/wp-content/uploads/2015/03/poisson.gif?resize=642%2C481")
-
-```
+![](https://i2.wp.com/www.theanalysisfactor.com/wp-content/uploads/2015/03/poisson.gif?resize=642%2C481)<!-- -->
 
 
 ***
