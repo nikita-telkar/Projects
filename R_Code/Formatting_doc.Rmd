@@ -1,0 +1,51 @@
+---
+title: "Formatting" 
+author: Nikita Telkar 
+date: "April 3, 1996"
+output: 
+  html_document: 
+    keep_md: yes 
+    toc: true 
+    toc_depth: 6
+    toc_float: 
+      collapsed: false 
+      smooth_scroll: false 
+    theme: yeti  #cosmo, paper, lumen, sandstone, simplex, yeti
+    #cerulean, journal, flatly, darkly, readable, spacelab, united
+    highlight: zenburn #tango, pygments, kate, monochrome, espresso, zenburn, haddock, textmate.
+--- 
+
+# Header  
+
+A test `.Rmd` document for *visualise* formatting **options**.  
+
+## Header  
+
+```{r}
+library(tidyr)  
+
+if( Sys.info()['sysname'] == "Linux" ) {
+  path <- "/home/BCRICWH.LAN/nikita.telkar/RobinsonLab/Nikita/Projects/cell_sorted/Images/Phred_Scores.png"
+} else {
+    path <- "Z:\\Nikita\\Projects\\cell_sorted\\Images\\Phred_Scores.png"
+} #filepath dependancy on operating system
+
+path
+```
+***
+
+### Header  
+
+***
+
+#### Header  
+
+***
+
+##### Header  
+
+***
+
+###### Header  
+
+***
