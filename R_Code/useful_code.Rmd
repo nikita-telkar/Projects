@@ -180,5 +180,17 @@ https://yihui.org/knitr/options/
 
 
 
+***
+
+#### **Selecting by column number vs name** 
+
+```{r}
+s1_zero <- s1_zero %>% 
+  filter(.[1] > 0)
+```
+
+***
+
+
 
 
