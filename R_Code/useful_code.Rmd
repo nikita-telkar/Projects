@@ -189,8 +189,22 @@ s1_zero <- s1_zero %>%
   filter(.[1] > 0)
 ```
 
-***
+***  
 
+#### **Recoding values for entire df**
 
+```
 
+eDat_cat <- eDat %>% 
+  mutate_all(funs(
+    case_when(
+    . == 0 ~ "0",  
+    . == 1 ~ "1",
+    between(., 1, 10)  ~ "2",
+    between(., 10, 100)  ~ "3",
+    . > 100  ~ "4"))
+  )
+
+```  
+***  
 
