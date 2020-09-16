@@ -170,3 +170,39 @@ https://jules32.github.io/2016-07-12-Oxford/dplyr_tidyr/
 
 ***
 
+#### **Knitr options** 
+
+https://yihui.org/knitr/options/
+
+***
+
+
+
+***
+
+#### **Selecting by column number vs name** 
+
+```
+s1_zero <- s1_zero %>% 
+  filter(.[1] > 0)
+```
+
+***  
+
+#### **Recoding values for entire df**
+
+```
+
+eDat_cat <- eDat %>% 
+  mutate_all(funs(
+    case_when(
+    . == 0 ~ "0",  
+    . == 1 ~ "1",
+    between(., 1, 10)  ~ "2",
+    between(., 10, 100)  ~ "3",
+    . > 100  ~ "4"))
+  )
+
+```  
+***  
+
