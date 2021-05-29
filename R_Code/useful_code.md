@@ -206,3 +206,30 @@ eDat_cat <- eDat %>%
 ```  
 ***  
 
+***  
+
+#### **Replacing NA's or 0**
+
+```
+
+eDat <- eDat %>% 
+  replace(is.na(.), 0)
+  
+eDat <- eDat %>%
+  replace(.==0, NA)
+
+```  
+***  
+
+
+#### **Indexing ggplot by column number**
+
+```
+mir_11361_5p %>% 
+  ggplot(aes_string(colnames(test)[2], colnames(test)[3]))
+
+```  
+***  
+
+
+

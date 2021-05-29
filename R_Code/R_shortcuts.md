@@ -21,7 +21,8 @@ Ctrl + Arrow Key (right/left)
 ***
 ### <span style="color:#834DC7">R</span>  
 
-**Notes:**  
+**Notes**  
+
 Bold - ** () **  
 Italics - * () *
 
@@ -57,18 +58,14 @@ Insert two spaces at the end of the line
 
 ***  
 
-#### **Switching R windows**  
-
-Switching to source  
-
+#### **Comment multiple lines**  
 ```
-Ctrl + 1
-```  
-
-Switching to console  
-
+Ctrl + Shift + C
 ```
-Ctrl + 2
-```  
+***  
 
+#### **Indent code automatically**  
+```
+Ctrl + Shift + I
+```
 ***
