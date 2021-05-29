@@ -208,3 +208,20 @@ eDat_cat <- eDat %>%
 ```  
 ***  
 
+#### **Replace NA with 0 or 0 with NA**
+
+```
+
+pDat %>% 
+  replace(is.na(.), 0)
+  
+mtcars %>% 
+  replace(.==0, NA)
+  
+starwars %>%
+  select(name, eye_color) %>%
+  mutate(eye_color = na_if(eye_color, "unknown"))
+
+```  
+***  
+
