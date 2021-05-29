@@ -40,9 +40,10 @@ knitr::include_graphics("https://i2.wp.com/www.theanalysisfactor.com/wp-content/
 
 **Negative Binomial Distribution** -  [Article Link](https://towardsdatascience.com/negative-binomial-regression-f99031bb25b4)   
 
-+ Regression model taht does not make the equi-dispersion assumption i.e.not assume that variance = mean.  
++ Regression model that does not make the equi-dispersion assumption i.e.not assume that variance = mean.  
 + Variance greater than the mean = over-dispersion, variance less than the mean = under-dispersion.  
 + Extension of a Poisson distribution to account for *overdispersed* data.  
+<<<<<<< HEAD
 
 ***  
 
@@ -51,6 +52,9 @@ knitr::include_graphics("https://i2.wp.com/www.theanalysisfactor.com/wp-content/
 For gene-specific variability, rather than assuming a common dispersion across genes or a fixed relationship between abundance and variability. Genewise dispersions de-prioritize genes with inconsistent results and allow the main analysis to focus on changes that are consistent between biological replicate.  
 
 ***
+=======
++ For DE anlysis: ANOVA and linear regression are basically the same. However, for transcriptomics data it is better to use the linear models in special software, such as DEseq2, edgeR or limma. In these programs you can use the same linear models as you do now with your ANOVA, but they use statistics better suitable for RNA-seq data.  
+>>>>>>> 986eb4a07273a33a98c1b8990752b3b560088c91
 
 
 

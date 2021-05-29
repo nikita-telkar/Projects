@@ -208,6 +208,7 @@ eDat_cat <- eDat %>%
 ```  
 ***  
 
+<<<<<<< HEAD
 ***  
 
 #### **Replacing NA's or 0**
@@ -219,10 +220,26 @@ eDat <- eDat %>%
   
 eDat <- eDat %>%
   replace(.==0, NA)
+=======
+#### **Replace NA with 0 or 0 with NA**
+
+```
+
+pDat %>% 
+  replace(is.na(.), 0)
+  
+mtcars %>% 
+  replace(.==0, NA)
+  
+starwars %>%
+  select(name, eye_color) %>%
+  mutate(eye_color = na_if(eye_color, "unknown"))
+>>>>>>> 986eb4a07273a33a98c1b8990752b3b560088c91
 
 ```  
 ***  
 
+<<<<<<< HEAD
 
 #### **Indexing ggplot by column number**
 
@@ -235,3 +252,5 @@ mir_11361_5p %>%
 
 
 
+=======
+>>>>>>> 986eb4a07273a33a98c1b8990752b3b560088c91
