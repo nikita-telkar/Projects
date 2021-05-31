@@ -1,0 +1,1748 @@
+---
+title: "BIGX Analysis Edits after Rob Lab Presentation" 
+author: Nikita Telkar 
+date: "July 23, 2020"
+output: 
+  html_document: 
+    keep_md: yes 
+    toc: true 
+    toc_depth: 4
+    toc_float: 
+      collapsed: false 
+      smooth_scroll: false 
+    theme: cosmo  #cosmo, paper, lumen, sandstone, simplex, yeti; cerulean, journal, flatly, darkly, readable, spacelab, united
+    highlight: zenburn #tango, pygments, kate, monochrome, espresso, zenburn, haddock, textmate.
+--- 
+
+***
+
+### Introduction  
+
+Edits of BIGX Analysis Redone. **Edits are in bold.** 
+
+### 1.0 Data  
+
+#### 1.1 Loading Libraries + Data  
+
+```{r loading libraries, message=FALSE, include=FALSE, error=FALSE, warning=FALSE}
+library(rmarkdown)
+library(installr)
+library(reshape2)
+library(dplyr) 
+library(tidyr) 
+library(readxl) 
+library(DT) 
+library(knitr) 
+library(kableExtra) 
+library(ggplot2)
+library(rcartocolor)
+library(egg)
+library(ggrepel)
+library(RColorBrewer)
+library(ggpubr)
+library(tidyverse)
+library(devtools)
+library(magrittr)
+library(arsenal)
+library(here)
+library(limma)
+library(miRBaseConverter)
+library (multiMiR)
+library(biomaRt)
+library(edgeR)
+library(DESeq2)
+library(preprocessCore)
+library(extrafont)
+loadfonts(device = "win")
+library(showtext)
+library(plomics)
+library(irlba)
+```  
+
+```{r theme}
+
+font_add_google("Montserrat", "Mont")
+showtext_auto()
+
+my_theme <- theme_minimal() +
+    theme(plot.title = element_text(family = "Mont"),
+          plot.subtitle = element_text(family = "Mont"),
+          legend.text = element_text(family = "Mont"),
+          axis.title = element_text(family = "Mont"))
+
+knitr::opts_chunk$set(fig.showtext = TRUE, fig_retina = 1) #needed to render show_text
+
+#colour blind friendly palette
+cbPaletteOG <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7", "#000000")
+cbPalette <- c("#56B4E9", "#999999", "#E69F00", "#009E73", "#0072B2", "#D55E00")
+#pie(rep(1, 9), col = cbPaletteOG)
+
+```
+
+
+```{r loading data, message=FALSE}
+
+eDat_norows <- read_excel (here::here("data", "processed", "snc_placenta_rob_eDat.xlsx"), col_names = TRUE)
+colnames (eDat_norows)[1] <- "gene"
+eDat <- eDat_norows %>% 
+  column_to_rownames(var = "gene")
+#t_e_norows <- as.data.frame(t(eDat_norows))
+miRNA <- row.names(eDat)
+#colnames (t_e_norows) <- miRNA
+#t_e_norows <- t_e_norows [-1,]
+#t_e_norows <- rownames_to_column(t_e_norows, var ="sample")
+
+pDat <- read_excel(here::here("data", "processed", "snc_placenta_rob_pDat.xlsx"), col_names = TRUE)
+pDat <- pDat [, -1]
+
+(pDat$sample == names(eDat)) %>% all() #order of samples in pDat matches order of columns in eDat
+
+pred <- read_excel (here::here("data", "raw", "predictions.xlsx"), col_names = TRUE)
+
+etest <- read_excel(here::here("data", "raw", "quantification_novel_mirnas_rpm_norm.xlsx"), col_names = TRUE, range = cell_cols("A:B"))
+```
+
+
+#### 1.2 Phenotype Info
+
+```{r phenotype info, warning=FALSE, results= "asis"}
+
+pDat [1:5,] %>% 
+  kable() %>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F, fixed_thead = T)
+
+```  
+
+There are 3 different variables we can consider for causing confounding batch effects, *library*, *flow cell*, and *lane*. I'll combine them all into one variable for convinience's sake, because while libraries and flow cells have unique identifiers, lanes are numbered from 1 to 8. And hence, when I'll control for amy possible differential effects exerted due to different lanes - all lanes with the value 2 will be reagrded as the same variable, even though they might be part of a different flow cell.  
+
+```{r uniting lib_flow_lane}
+
+pDat <- pDat %>% 
+  unite("lib_flow_lane", 12:14, sep = "_", remove = FALSE) %>% 
+  unite("flow_lane", 14:15, sep = "_", remove = FALSE)
+  #merging different library, flow cell, and lane condtions into one variable to correct for later on
+names(pDat)
+
+pDat$lib_flow_lane <- as.factor(pDat$lib_flow_lane)
+str(pDat$lib_flow_lane) #9 different combinations
+
+pDat$flow_lane <- as.factor(pDat$flow_lane)
+str(pDat$flow_lane) 
+
+```  
+
+Now, taking a look at the variables again, I'm going to select the following as the ones of interest:  
+
+1. condition  
+2. trimester  
+3. sex  
+4. libraryID  
+5. flow_lane  
+6. flowCell  
+7. lib_flow_lane
+
+```{r results='asis'}
+
+sum_stats <- pDat[c(6,9,10,12,13,14,15)]
+names(sum_stats)
+tab1 <- tableby(trimester~., data = sum_stats, test =FALSE) #package: arsenal --> cannot use with %>% 
+summary (tab1, title ="Breakdown of Samples by Trimester")
+  
+```  
+
+**However, after combingin lib_flow_lane, we can see that there are 4 of them which only have 1 sample corresponding to that variable (MX1303_C5JC4ACXX_3,  MX1303_C5JC4ACXX_4,  MX1303_C5JC4ACXX_5), and MX1307_C5JC4ACXX_7 having only 2 samples belonging to it. This will overestimate / underestimate the effect that this variable might when accounting for differential expression. So, I'll be going forward with using Flow Cell as a variable of interest instead of lib_flow_lane.**
+
+*** 
+
+#### 1.3 Expression Data  
+
+```{r exp data, message=FALSE}
+
+dim (eDat) #28898 30
+
+eDat [1:10,] %>% 
+  kable() %>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F, fixed_thead = T)
+```  
+
+There are a total of 28,898 miRNAs and 30 samples.  
+
+```{r exp info}
+
+eInfo <- etest %>% 
+  inner_join(pred, by = c("precursor" = "precursor_name"))
+
+rm(etest, pred)
+
+names(eInfo)
+```
+
+***
+
+### 2.0 Quality Control  
+
+#### 2.1 Exploratory Plots  
+
+```{r density plot, fig.width = 12, cache=TRUE, message=FALSE}
+
+e_melt <- melt(eDat)
+colnames (e_melt) <- c("sample", "expression")
+
+log_dat <- log2(eDat)
+names <- as.character(1:30)
+colnames(log_dat) <- names
+rm(names)
+log_melt <- melt(log_dat)
+colnames (log_melt) <- c("sample", "expression")
+
+hist(log_melt$expression)
+
+log_melt %>% 
+  ggplot(aes(expression, color = sample, fill = sample)) +
+  geom_density(alpha = 0.1) + 
+ # theme(legend.position = "bottom", legend.text = element_text(size = 17)) +
+  theme(legend.position = c(.95, .95),legend.justification = c("right", "top")) +
+  #guides(color = guide_legend(nrow = 2)) +
+  labs(x = "Sample")
+
+log_melt %>%
+  ggplot(aes(x = sample, y = expression, fill=sample)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90))
+
+  
+```  
+
+Now, when using the dataset containing all miRNA - the zeros get transformed to infinity and are hence not ploted. And it flags up **sample 11**. The boxplot shows that the majority of the expresion values hover around zero.  
+
+***  
+
+#### 2.2 Filtering  
+
+Let's take a look at the original data again.  
+
+```{r}
+eDat [1:10,] %>% 
+  kable() %>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F, fixed_thead = T)
+```  
+
+Right away we can see that even for the 10 miRNAs displayed, there are some which have 0 expression across all samples. Further analysis results would be more significant if these miRNAs were removed.  
+
+```{r removing mirnas with zero expression}
+
+eDat_exp <- eDat %>% 
+  rownames_to_column(var = "mirna") %>% 
+  filter_at(vars(-mirna), any_vars(. != 0)) %>% 
+  column_to_rownames(var = "mirna")
+
+dim (eDat_exp) #13038
+```  
+
+That removed 15860 miRNAs.  
+
+We can also further filter by:  
+
+1. By number of counts in the samples  
+2. By expression in a percentage of samples 
+  
+
+1. Applying the concept of keeping miRNAs present in at least as many samples as the smallest group size. Grouping by the variables we want to further analyse by:
+
+```{r sumstats visualise}
+
+table <- sum_stats[1:3] 
+ftable(table)
+
+```  
+
+Here, the group containing the least number of samples is **2** - there are 2 male control samples in trimester 1.  
+
+a. By summing the counts across the rows and filtering by counts of 2 or more:  
+
+```{r keeping mirnas with reads of at least 2}
+
+fil_1 <- eDat_exp %>% 
+  mutate(sum = rowSums(.)) %>% 
+  filter(sum >=2) %>% 
+  dplyr::arrange(sum) %>% 
+  dplyr::select(-sum)
+
+dim(fil_1) #1976
+```  
+
+In this case however for example, there can be miRNAs with a count of 0.02 in 1 sample, and a count of 4 in another sample, which would give us a sum of more than 2 at the end. To address this, we can further filter out any miRNAs which have reads of less than 1 in any of the samples, and then apply the same step as above.  
+
+```{r counts of more than 1 in all samples}
+
+fil_2 <- eDat_exp %>% 
+  rownames_to_column("miRNA") %>% 
+  filter_if(is.numeric, all_vars(. > 1)) %>% 
+  mutate(sum = rowSums(.[2:31])) %>% 
+  filter(sum >= 2) %>% 
+  dplyr::arrange(sum) %>% 
+  dplyr::select(-sum) %>% 
+  column_to_rownames("miRNA")
+
+dim(fil_2) #557
+
+```  
+
+b. Keeping miRNAS having reads > 0 in at least 2 samples.  
+
+```{r at least 2 samples }  
+
+fil_3 <- eDat_exp[rowSums(eDat_exp > 0) >= 2, ]
+
+dim(fil_3)
+
+```  
+
+2. Keeping only miRNAS having reads in atleast 30% of the samples i.e. in atleast 9 samples.  
+
+```{r 10 percent samples}
+
+fil_4 <- eDat_exp[rowSums(eDat_exp > 0) >= 9, ] #counts of more than zero in 3 or more samples
+
+dim(fil_4)
+
+```
+
+
+**Performing the same graphing for the filtered datasets**:
+
+```{r density for filtered and eDat_exp, echo = F, message=FALSE, warning=FALSE}
+
+log_eDat_exp <- log2(eDat_exp)
+names <- as.character(1:30)
+colnames(log_eDat_exp) <- names
+rm(names)
+log_eDat_exp_melt <- melt(log_eDat_exp)
+colnames (log_eDat_exp_melt) <- c("sample", "expression") 
+
+d1 <- log_eDat_exp_melt %>% 
+    ggplot(aes(expression, color = sample)) +
+    geom_density() + 
+  theme_light() +
+   # theme(legend.position = "bottom", legend.text = element_text(size = 17)) +
+    theme(legend.position = c(.95, .95),legend.justification = c("right", "top"),
+          plot.title = element_text(face = "plain", hjust = 0.5, colour = "#333333"), 
+          plot.subtitle =element_text("plain", hjust = 0.5, colour = "#333333")) +
+    #guides(color = guide_legend(nrow = 2)) +
+    scale_x_continuous(expand = c(0, 0)) + 
+    scale_y_continuous(expand = c(0, 0)) +
+    coord_cartesian(y = c(0, 0.45)) +
+    labs(x = "Log2 Expression", title = "miRNAs with Expression > 0 in at least 1 sample", subtitle = "13038 miRNAs")
+
+b1 <- log_eDat_exp_melt %>% 
+  ggplot(aes(x = sample, y = expression, fill=sample)) +
+  geom_boxplot() +
+  theme_minimal() +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 90))
+
+```
+
+```{r dens fil1}
+
+log_fil1 <- log2(fil_1)
+names <- as.character(1:30)
+colnames(log_fil1) <- names
+rm(names)
+log_fil1_melt <- melt(log_fil1)
+colnames (log_fil1_melt) <- c("sample", "expression") 
+
+d2 <- log_fil1_melt %>% 
+    ggplot(aes(expression, color = sample)) +
+    geom_density() + 
+  theme_light() +
+    #theme(legend.position = "bottom", legend.text = element_text(size = 17)) +
+    theme(legend.position = c(.95, .95),legend.justification = c("right", "top"), 
+          plot.title = element_text(face = "plain", hjust = 0.5, colour = "#333333"), 
+          plot.subtitle =element_text("plain", hjust = 0.5, colour = "#333333")) +
+    #guides(color = guide_legend(nrow = 2)) +
+    scale_x_continuous(expand = c(0, 0)) + 
+    scale_y_continuous(expand = c(0, 0)) +
+    coord_cartesian(y = c(0, 0.45)) +
+    labs(x = "Log2 Expression", title = "miRNAs with Expression >= 2 across all samples", subtitle = "1976 miRNAs")  
+
+b2 <- log_fil1_melt %>% 
+  ggplot(aes(x = sample, y = expression, fill=sample)) +
+  geom_boxplot() +
+  theme_minimal() +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 90))
+
+```
+
+```{r dens fil2}
+
+log_fil_2 <- log2(fil_2)
+names <- as.character(1:30)
+colnames(log_fil_2) <- names
+rm(names)
+log_fil_2_melt <- melt(log_fil_2)
+colnames (log_fil_2_melt) <- c("sample", "expression") 
+
+d3 <- log_fil_2_melt %>% 
+    ggplot(aes(expression, color = sample)) +
+    geom_density() + 
+  theme_light() +
+    #theme(legend.position = "bottom", legend.text = element_text(size = 17)) +
+    theme(legend.position = c(.95, .95),legend.justification = c("right", "top"), 
+          plot.title = element_text(face = "plain", hjust = 0.5, colour = "#333333"), 
+          plot.subtitle = element_text("plain", hjust = 0.5, colour = "#333333")) +
+    #guides(color = guide_legend(nrow = 2)) +
+    scale_x_continuous(expand = c(0, 0)) + 
+    scale_y_continuous(expand = c(0, 0)) +
+    coord_cartesian(y = c(0, 0.45)) +
+    labs(x = "Log2 Expression", title = "miRNAs with Expression > 1 in >= 2 samples", subtitle = "557 miRNAs")  
+
+b3 <- log_fil_2_melt %>%
+  ggplot(aes(x = sample, y = expression, fill=sample)) +
+  geom_boxplot() +
+  theme_minimal() +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 90))
+
+```
+
+```{r dens fil3}
+
+log_fil_3 <- log2(fil_3)
+names <- as.character(1:30)
+colnames(log_fil_3) <- names
+rm(names)
+log_fil_3_melt <- melt(log_fil_3)
+colnames (log_fil_3_melt) <- c("sample", "expression") 
+
+d4 <- log_fil_3_melt %>% 
+    ggplot(aes(expression, color = sample)) +
+    geom_density() + 
+  theme_light() +
+    #theme(legend.position = "bottom", legend.text = element_text(size = 17)) +
+    theme(legend.position = c(.95, .95),legend.justification = c("right", "top"), 
+          plot.title = element_text(face = "plain", hjust = 0.5, colour = "#333333"), 
+          plot.subtitle = element_text("plain", hjust = 0.5, colour = "#333333")) +
+    #guides(color = guide_legend(nrow = 2)) +
+    scale_x_continuous(expand = c(0, 0)) + 
+    scale_y_continuous(expand = c(0, 0)) +
+    coord_cartesian(y = c(0, 0.45)) +
+    labs(x = "Log2 Expression", title = "miRNAs with Expression > 0 in >= 2 samples", subtitle = "8025 miRNAs")  
+
+b4 <- log_fil_3_melt %>%
+  ggplot(aes(x = sample, y = expression, fill=sample)) +
+  geom_boxplot() +
+  theme_minimal() +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 90))
+
+```  
+
+```{r dens fil4}
+
+log_fil_4 <- log2(fil_4)
+names <- as.character(1:30)
+colnames(log_fil_4) <- names
+rm(names)
+log_fil_4_melt <- melt(log_fil_4)
+colnames (log_fil_4_melt) <- c("sample", "expression") 
+
+d5 <- log_fil_4_melt %>% 
+    ggplot(aes(expression, color = sample)) +
+    geom_density() + 
+  theme_light() +
+    #theme(legend.position = "bottom", legend.text = element_text(size = 17)) +
+    theme(legend.position = c(.95, .95),legend.justification = c("right", "top"), 
+          plot.title = element_text(face = "plain", hjust = 0.5, colour = "#333333"), 
+          plot.subtitle = element_text("plain", hjust = 0.5, colour = "#333333")) +
+    #guides(color = guide_legend(nrow = 2)) +
+    scale_x_continuous(expand = c(0, 0)) + 
+    scale_y_continuous(expand = c(0, 0)) +
+    coord_cartesian(y = c(0, 0.45)) +
+    labs(x = "Log2 Expression", title = "miRNAs with Expression > 0 in atleast 30% (9) samples", subtitle = "3121 miRNAs")  
+
+b5 <- log_fil_4_melt %>%
+  ggplot(aes(x = sample, y = expression, fill=sample)) +
+  geom_boxplot() +
+  theme_minimal() +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 90))
+```
+
+
+```{r fig.width = 15, fig.asp = 2, message=FALSE, warning=FALSE, cache=TRUE}
+
+egg::ggarrange(d1, b1, d2, b2, d3, b3, d4, b4, d5, b5, nrow = 5, widths = c(0.75,1))
+
+```  
+
+From the above, it's clear that the last plot shows the best spread of the data after filtering (RPM > 1 for all miRNA, with RPM >=2 in all samples). This is the data I'll be proceeding with.  
+
+***  
+
+#### 2.3 Normalisation  
+
+**The data has already been scaled by Reads Per Million (RPM)**  
+
+But since the miRNA sequences have been further filtered, I'm going to model how different normalisations behave, and see see which performs best.  
+
+A little about the different methods:  
+  
++ Quantile, Logx, Upper Quartile are *purely mathematical non-biological* approaches.    
++ TPM and RPKM are *biological transformations based on transcript size*.  
++ TMM and RLE (and MRN which is built on combining TMM and RLE) use a *combination of both biologically and mathematically* based approaches.  
+
+
+Biological Normalisation Methods  
+
+| Within-sample | Between-sample |  
+|-|-|  
+| RPM/CPM | TMM |  
+| RPKM/FPKM | RLE |  
+| TPM | MRN |  
+
+**Quantile**
+
+```{r quant norm}  
+
+eFil <- fil_2
+
+#summary(eFil)
+
+q_norm <- eFil %>% 
+  as.matrix() %>% 
+  normalize.quantiles #library(preprocessCore)
+
+#summary(q_norm)
+
+q_norm <- cpm(q_norm) #scaling by CPM
+
+#q_norm %>% 
+#  as.data.frame() %>% 
+#  dplyr::filter(q_norm > quantile(q_norm, 0.25), 
+#                q_norm < quantile(q_norm, 0.75))
+
+qnorm_melt <-  melt(q_norm)
+
+n1 <- qnorm_melt %>% 
+  ggplot(aes(x = log10(value), colour = factor(Var2))) +
+  geom_density() +
+  theme(legend.position = "none") +
+  labs(title = "Quantile Normalisation", x = "", y = "") +
+  coord_cartesian(x = c(0,5), y = c(0, 0.5))
+
+```
+
+Making an `edgeR` package compatible object to carry out the further analyses -  
+
+```{r making edgeR object}
+
+fil_miRNA <- as.data.frame(row.names(eFil))
+
+norm3 <- DGEList(counts = eFil, samples = pDat, genes = fil_miRNA)
+
+```  
+
+**TMM**  
+
+```{r tmm norm}
+
+dge <- calcNormFactors(norm3, method = "TMM") 
+
+tmm <- cpm(dge)
+
+tmm_melt <- melt(tmm)
+n2 <- tmm_melt %>% 
+  ggplot(aes(x = log10(value), colour = factor(Var2))) +
+  geom_density() +
+  theme(legend.position = "none") +
+  labs(title = "TMM Normalisation", x = "", y = "") +
+  coord_cartesian(x = c(0,5), y = c(0, 0.5))
+
+```  
+
+**RLE** 
+
+```{r rle} 
+
+dge2 <- calcNormFactors(norm3, method = "RLE") 
+
+rle <- cpm(dge2)
+
+rle_melt <- melt(rle)
+n3 <- rle_melt %>% 
+  ggplot(aes(x = log10(value), colour = factor(Var2))) +
+  geom_density() +
+  theme(legend.position = "none") +
+  labs(title = "RLE Normalisation", x = "", y = "") +
+  coord_cartesian(x = c(0,5), y = c(0, 0.5))
+
+```  
+
+**Upper Quartile**  
+
+```{r upq norm} 
+
+dge3 <- calcNormFactors(norm3, method="upperquartile", p = 0.5)  
+
+upq <- cpm(dge3)
+
+upq_melt <- melt(upq)
+n4 <- upq_melt %>% 
+  ggplot(aes(x = log10(value), colour = factor(Var2))) +
+  geom_density() +
+  theme(legend.position = "none") +
+  labs(title = "Upper Quartile Normalisation", x = "", y = "") +
+  coord_cartesian(x = c(0,5), y = c(0, 0.5))
+
+```  
+
+***  
+
+##### 2.3.1 Comparison of Different Normalisation Methods  
+  
+```{r density plots of diff norms, fig.width=10, fig.asp=0.8}  
+#reposition_legend(n4 + theme(legend.position='bottom'), 'bottom left')
+
+ggarrange(n1, n2, n3, n4, 
+          labels = c("A", "B", "C", "D"), 
+          common.legend = TRUE, legend = "none") %>% 
+  annotate_figure(bottom = text_grob("log10 Values", size = 15, vjust = -1, color = "#4d4d4d"),
+                  left = text_grob("Density", size = 15, rot = 90, color = "#4d4d4d"),
+                  top = text_grob("CPM Transformed", size = 15, face = "bold", color = "#4d4d4d"))
+
+```  
+
+Observing the difference in the normalised counts for a random miRNA *pred-nov-miR-13819-3p* now (**Adding in the original expression value of the miRNA**):    
+
+```{r compare normalised counts for miRNA, fig.width=15, fig.asp=0.6}
+
+norm_counts <- tmm[1, ]
+norm_counts <- as.data.frame(norm_counts)
+colnames (norm_counts) [1] <- "TMM"
+norm_counts$RLE <- rle[1,]
+norm_counts$UPQ <- upq[1,]
+norm_counts$Quant <- q_norm[1,]
+norm_counts$Trimester <- pDat$trimester
+
+org_mirna <- eFil %>% 
+  rownames_to_column("seq") %>% 
+  filter(seq == "pred-nov-miR-13819-3p")
+org_mirna <- t(org_mirna)
+org_mirna <- as.data.frame(org_mirna[-1, ])
+colnames(org_mirna) [1] <- "Original_Expression"
+org_mirna <- org_mirna %>% 
+  rownames_to_column("sam")
+org_mirna$Original_Expression <- as.numeric(as.character(org_mirna$Original_Expression))
+
+norm_counts_1 <-  norm_counts %>% 
+  rownames_to_column("Sample") %>% 
+  rowid_to_column("ID") %>%
+  dplyr::arrange(Trimester) %>% 
+  pivot_longer(cols = 3:6, names_to = "Method", values_to = "CPM")
+
+norm_counts_2 <-  norm_counts %>% 
+  rownames_to_column("Sample") %>% 
+  inner_join(org_mirna, by = c("Sample" = "sam")) %>% 
+  rowid_to_column("ID") %>%
+  dplyr::arrange(Trimester) %>% 
+  dplyr::select(ID, Sample,Trimester, everything()) %>% 
+  pivot_longer(cols = 4:8, names_to = "Method", values_to = "CPM") %>% 
+  mutate(Method = fct_relevel(Method, c("TMM", "RLE", "UPQ", "Quant", "Original_Expression"))) 
+  #mutate(Original = ifelse(Method = "Original_Expression", )) ---> ????
+
+#norm_counts <-  norm_counts
+
+colpal1 <- c("#801361", "#c92f56", "#f76d39", "#ffb708")
+colpal2 <- c("#0e00a6" , "#d50061", "#c6d42f", "#f2690a", "#8c8c8c")
+cbPalette2 <- c("#000000", "#E69F00", "#56B4E9")
+
+
+n5 <- norm_counts_1 %>% 
+  ggplot(aes(x = factor(ID), y = CPM, colour = factor(Method))) + 
+  geom_point(size = 2) +
+ # scale_x_discrete(expand = c(3,3)) +
+  theme_minimal() +
+  scale_colour_manual(values = cbPalette, name = "Method") +
+  theme(legend.position = "bottom") +
+  labs(title = "Estimated CPM of pred-nov-miR-13819-3p by different normalisation methods", subtitle = "Including Quantile Normalisation") +
+  labs(x = "Sample", y = "CPM")  
+
+n6 <- norm_counts_1 %>% 
+  ggplot(aes(x = factor(ID), y = CPM, colour = factor(Trimester))) + 
+  geom_boxplot() +
+ # scale_x_discrete(expand = c(3,3)) +
+  theme_minimal() +
+  scale_colour_manual(values = cbPalette2, name = "Trimester") +
+  theme(legend.position = "bottom") +
+ # labs(title = "Estimated CPM of pred-nov-miR-13819-3p by different normalisation methods", subtitle = "Box Plot") +
+  labs(x = "Sample", y = "CPM")  
+
+#taking out Quant
+
+n7 <- norm_counts_1 %>% 
+  filter(!Method == "Quant") %>% 
+  ggplot(aes(x = factor(ID), y = CPM, colour = factor(Method))) + 
+  geom_point(size = 2) +
+ # scale_x_discrete(expand = c(3,3)) +
+  theme_minimal() +
+  scale_colour_manual(values = cbPalette, name = "Method") +
+  theme(legend.position = "bottom") +
+ labs(title = "Estimated CPM of pred-nov-miR-13819-3p by different normalisation methods", subtitle = "Not including Quantile Normalisation") +
+  labs(x = "Sample", y = "CPM") 
+
+n8 <- norm_counts_1 %>% 
+  filter(!Method == "Quant") %>% 
+  ggplot(aes(x = factor(ID), y = CPM, colour = factor(Trimester))) + 
+  geom_boxplot() +
+ # scale_x_discrete(expand = c(3,3)) +
+  theme_minimal() +
+  scale_colour_manual(values = cbPalette2, name = "Trimester") +
+  theme(legend.position = "bottom") +
+#  labs(title = "Estimated CPM of pred-nov-miR-13819-3p by different normalisation methods", subtitle = "Box Plot") +
+  labs(x = "Sample", y = "CPM")  
+
+n9 <- norm_counts_2 %>% 
+  ggplot(aes(x = factor(ID), y = CPM, colour = factor(Method))) + 
+  geom_point(size = 2) +
+ # scale_x_discrete(expand = c(3,3)) +
+  theme_minimal() +
+  scale_colour_manual(values = cbPalette, name = "Method") +
+  theme(legend.position = "bottom") +
+  labs(title = "CPM of pred-nov-miR-13819-3p", subtitle = "") +
+  labs(x = "Sample", y = "CPM")  
+
+n9
+
+egg::ggarrange(n5, n7, n6, n8, labels = c("a1", "b1", "a2", "b2"))
+
+``` 
+
+
+[Deciding on which normalisation method to use](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6171491/) is an important step which influences downstream analysis and results.  
+
+**I'm going to go forward with the RLE method.**  
+
+***  
+
+#### 2.4 PCA 
+
+Applying PCA to view which variables are driving variance:  
+
+> WHICH DATASET TO USE FOR PCA? eDat or eDat_exp? Both
+
+```{r PCA prcomp}
+
+eNorm <- fil_2
+
+pDat <- pDat %>% 
+  column_to_rownames(var = "sample")
+
+t_eNorm <- as.data.frame(t(eNorm))
+
+pca <- prcomp_irlba(t_eNorm, n = 20)
+plot(pca)
+summary(pca)
+
+pca2 <- prcomp(t_eNorm)
+
+scores <- pca$x #dependant variables for lmmatrix func
+
+```
+
+```{r, eval=FALSE, include=FALSE}
+pDat_1 <- sum_stats[c(1,2,3,7)] #independant variables for lmmatrix func - condition, trimester, sex, lib_flow_lane
+
+str(pDat_1)
+pDat_1 <- pDat_1 %>% 
+  mutate_if(is.character, as.factor)
+
+ftable(pDat_1$condition, pDat_1$trimester, pDat_1$sex) 
+``` 
+
+```{r PCA additional}
+
+#From: http://www.sthda.com/english/articles/31-principal-component-methods-in-r-practical-guide/112-pca-principal-component-analysis-essentials/ 
+
+library("factoextra")
+eig_val <- get_eigenvalue(pca)
+eig_val
+fviz_eig(pca, addlabels = TRUE)
+
+var <- get_pca_var(pca)
+var
+
+fviz_pca_var(pca, col.var = "black")
+```
+
+
+Using the `lmmatrix` function to find any association between the miRNA expression levels and the phenotypic variables:  
+
+**PCs with metric P value and flow_cell:**
+
+```{r lmmatrix pvalue flowcell}
+
+
+pDat_2 <- sum_stats[c(1,2,3,7)]
+
+pc_cor_pval <- lmmatrix(dep = scores, ind = pDat_2, metric = 'Pvalue') #correaltion matrix
+
+t_pc_cor_pval <- t(pc_cor_pval) #only for visual purposes! Not being used for any calculations!
+
+t_pc_cor_pval %>% 
+  as.data.frame() %>% 
+    mutate(condition = round(condition, digits = 3), 
+           trimester = round(trimester, digits = 3),
+           sex = round(sex, digits = 3),
+           flowCell = round(flowCell, digits = 3)) %>% 
+    mutate(
+    condition = cell_spec(condition, "html", color = ifelse(condition <= 0.05, "green", "")), 
+    trimester = cell_spec(trimester, "html", color = ifelse(trimester <= 0.05, "green", "")),
+    sex = cell_spec(sex, "html", color = ifelse(sex <= 0.05, "green", "")), 
+    flowCell = cell_spec(flowCell, "html", color = ifelse(flowCell <= 0.05, "green", ""))) %>%
+  kable(format = "html", escape = F) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", full_width = F, fixed_thead = T))
+ 
+ 
+```  
+
+*Trimester* and *flowCell* (batch effects) variable seem to be driving the most variance, followed by *condition*, but sex does not seem be a confounder.  
+
+Plotting the covariance matrix for the above:  
+
+```{r pca covariance pval flowcell, fig.width=10}
+
+#for co-variance matrix
+pca_scores <- pca$x[,1:20] %>% 
+  as.data.frame()
+
+pc_info <- summary(pca)$importance %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column(var = 'variable') %>%
+  gather(key = 'PC', value = 'value', -variable) %>%
+  as_tibble() %>%
+  mutate(PC = factor(as.character(PC), levels = paste0('PC', 1:20)),
+         Label = ifelse(variable == 'Proportion of Variance',
+                        paste0(PC, ' (', prettyNum(value*100, digits = 2), '%)'),
+                        as.character(PC))) %>%
+  arrange(variable, PC)
+
+pc_plot <- pc_cor_pval %>% 
+  as.data.frame %>% 
+  mutate(dep = rownames(pc_cor_pval)) %>% 
+  gather(PC, pval, -dep) %>%
+  mutate(pval_cat = factor(case_when(
+    pval > 0.05  ~ '> 0.05',
+    pval < 0.05 & pval > 0.01 ~ '< 0.05',
+    pval < 0.01 & pval > 0.001 ~ '< 0.01',
+    pval < 0.001 ~ '< 0.001'
+  ), levels = c('> 0.05', '< 0.05','< 0.01', '< 0.001')),
+  PC = factor(PC, levels = paste0('PC', 1:20))) %>% as_tibble()
+
+pc_info <- na.omit(pc_info) #NAs signify PCs 21-30
+pc_plot <- na.omit(pc_plot) 
+
+
+# create color palette 
+#colpal <- c('white', '#df9fdf', '#ac39ac', '#732673') #original purple
+#names(colpal) <- levels(pc_plot$pval_cat)
+
+#recolouring to a colour blind palette
+#cbPink = carto_pal(7, "Burg")
+#cbPink
+#pie(rep(1, 7), col = cbPink)
+#cbPink <- c("white", "#ffc6c4", "#e38191", "#ad466c")
+#colpal <- cbPink
+#names(colpal) <- levels(pc_plot$pval_cat)
+
+cbPeach = carto_pal(7, "Peach")
+cbPeach
+#pie(rep(1, 7), col = cbPeach)
+cbPeach <- c("white", "#fde0c5", "#f59e72", "#ef6a4c")
+colpal <- cbPeach
+names(colpal) <- levels(pc_plot$pval_cat)
+
+
+
+p1 <- ggplot(pc_plot, aes(x = PC, y = factor(dep), fill = pval_cat)) +
+  geom_tile( col = 'lightgrey') +
+  theme_bw() +
+  scale_x_discrete(expand = c(0, 0), labels = 1:20) + #expand function fits the plot to its assigned dimesions 
+  scale_y_discrete(expand = c(0, 0)) +
+  scale_fill_manual(values = colpal)  + 
+  coord_fixed() + # very important otherwise height of each tile is elongated!
+  labs(y = '', fill = 'P value')
+
+p2 <- ggplot(pc_info %>% 
+               filter(variable == 'Proportion of Variance') %>%
+               mutate(value = value*100), 
+             aes(x = PC, y = value)) +
+  geom_bar(stat = 'identity') +
+  theme_bw() + 
+  coord_cartesian(ylim = c(0,50)) +
+  scale_x_discrete(expand = c(0, 0), labels = 1:20) + 
+  scale_y_continuous(expand = c(0, 0)) +
+  labs(y = '% variance explained')
+
+#have to change the height of the second object in accordance with the first for different plots
+egg::ggarrange(p1, p2, heights = c(3,0.2)) 
+
+```   
+
+Now, let's use R-squared as the metric instead of the P value.  
+
+**PCs with metric R-sqaured and flow_cell:**
+
+```{r lmmatrix rsquared}
+
+pca_scores <-pca$x %>% 
+  as_tibble() %>% 
+  mutate(Sample_Name = row.names(pDat)) 
+
+pc_cor_rs <- lmmatrix(dep = pca_scores[,1:20], ind = pDat_2, metric = 'Rsquared')
+
+t_pc_cor_rs <- t(pc_cor_rs) %>% 
+  as.data.frame()
+
+t_pc_cor_rs %>% 
+  as.data.frame() %>% 
+    mutate(condition = round(condition, digits = 3), 
+           trimester = round(trimester, digits = 3),
+           sex = round(sex, digits = 3),
+           flowCell = round(flowCell, digits = 3)) %>% 
+    mutate(
+    condition = cell_spec(condition, "html", color = ifelse(condition <= 0.05, "green", "")), 
+    trimester = cell_spec(trimester, "html", color = ifelse(trimester <= 0.05, "green", "")),
+    sex = cell_spec(sex, "html", color = ifelse(sex <= 0.05, "green", "")), 
+    flowCell = cell_spec(flowCell, "html", color = ifelse(flowCell <= 0.05, "green", ""))) %>%
+  kable(format = "html", escape = F) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", full_width = F, fixed_thead = T))
+ 
+pc_plot_rs <- pc_cor_rs %>% 
+  as.data.frame() %>% 
+  mutate(indep = rownames(pc_cor_rs)) %>%
+  pivot_longer(c(-indep), names_to = "PC", values_to = "rsqr" ) %>%
+  mutate(PC = factor(PC, levels = colnames(pc_cor_rs))) %>% 
+  as_tibble()
+
+head(pc_plot_rs)
+```  
+
+Now, it looks like *sex* is driving the first 3 PCs, follwed by *condition* and then *trimester*. 
+
+The same for RSquared:  
+
+```{r pca covariance pval rsqaured, fig.width=10}
+
+#ACC TO ALMAS'S SCRIPT
+
+# calculate proportion variance
+prop_var_rs <- tibble(Prop_var_norm = pca$sdev^2 *100 / pca$totalvar,
+                      PC = 1:20)
+
+p1_r <- ggplot(pc_plot_rs, aes(x = PC, y = indep, fill = rsqr)) +
+  geom_tile(col = 'lightgrey') + 
+  theme_bw() +
+  scale_fill_gradient(low = "white", high = "#ef6a4c") + # continuous purple colour scale
+  scale_x_discrete(expand = c(0, 0), labels = 1:20) +
+  scale_y_discrete(expand = c(0, 0)) +
+  coord_fixed() +
+  labs(y = '', fill = 'R Squared', caption = "Note: R-squared values range from 0 - 0.47")
+
+p1b_r <- ggplot(prop_var_rs, aes(x = PC, y = Prop_var_norm)) +
+  geom_bar(stat = 'identity') + 
+  theme_bw() + 
+  labs(y = '% variance') +
+  coord_cartesian(ylim = c(0,50)) +
+  scale_x_continuous(breaks = 1:20) +
+  scale_y_continuous(expand = c(0, 0))
+
+egg::ggarrange(p1_r, p1b_r, heights = c(3,0.2))
+
+```  
+
+Comparing both P Value and R Squared Plots:  
+
+```{r pval and rsq cor plot, echo=FALSE,fig.width=10}
+
+egg::ggarrange(p1, p1_r)
+
+```
+
+Matching PC scores to `pDat`:  
+
+```{r metadat}
+
+meta_dat <- cbind(pDat, pca_scores) #matching phenotype data to it's first 10 PCs
+
+``` 
+
+##### PC1 versus PC2 {.tabset}  
+
+###### Trimester
+
+```{r, echo=FALSE}
+
+meta_dat %>% 
+  ggplot(aes(x = PC1, y = PC2, colour = trimester)) +
+  geom_point(size = 3) +
+  coord_cartesian(ylim = c(-100000, 100000), xlim = c(-150000, 150000)) +
+  labs( x = "Principle Component 1", y = "Principle Component 2", title = "Trimester: PC1 vs PC2") +
+  scale_colour_manual(values = cbPalette) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+```
+
+###### flowCell
+
+```{r, echo=FALSE}
+
+meta_dat %>% 
+  ggplot(aes(x = PC1, y = PC2, colour = flowCell)) +
+  geom_point(size = 3) + 
+  scale_colour_manual(values = cbPalette2, name = "Flow Cell") +
+  coord_cartesian(ylim = c(-100000, 100000), xlim = c(-150000, 150000)) +
+  labs( x = "Principle Component 1", y = "Principle Component 2", title = "Flow Cell: PC1 vs PC2") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+```
+
+###### Condition
+
+```{r, echo=FALSE}
+meta_dat %>% 
+  ggplot(aes(x = PC1, y = PC2, colour = condition)) +
+  geom_point(size = 3) +
+  scale_colour_manual(values = colpal2, name = "Condition") +
+  coord_cartesian(ylim = c(-100000, 100000), xlim = c(-150000, 150000)) +
+  labs( x = "Principle Component 1", y = "Principle Component 2", title = "Condition: PC1 vs PC2") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+```  
+
+###### Sex
+
+```{r, echo = FALSE}
+
+meta_dat %>% 
+  ggplot(aes(x = PC1, y = PC2, colour = sex)) +
+  geom_point(size = 3) + 
+  scale_colour_manual(values = c("#CC79A7", "#999999"), name = "Sex") +
+  coord_cartesian(ylim = c(-100000, 100000), xlim = c(-150000, 150000)) +
+  labs( x = "Principle Component 1", y = "Principle Component 2", title = "Sex: PC1 vs PC2") +
+  my_theme +
+  theme(legend.position = "bottom")  
+
+```
+
+##### PC2 versus PC3 {.tabset}
+
+###### Trimester
+
+```{r, echo=FALSE}
+
+meta_dat %>% 
+  ggplot(aes(x = PC2, y = PC3, colour = trimester)) +
+  geom_point(size = 3) +
+  coord_cartesian(ylim = c(-75000, 75000), xlim = c(-100000, 100000)) +
+  labs( x = "Principle Component 2", y = "Principle Component 3", title = "Trimester: PC2 vs PC3") +
+  scale_colour_manual(values = cbPalette) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+```
+
+###### flowCell
+
+```{r, echo=FALSE}
+
+meta_dat %>% 
+  ggplot(aes(x = PC2, y = PC3, colour = flowCell)) +
+  geom_point(size = 3) +
+  scale_colour_manual(values = cbPalette2, name = "Flow Cell") +
+  coord_cartesian(ylim = c(-75000, 75000), xlim = c(-100000, 100000)) +
+  labs( x = "Principle Component 2", y = "Principle Component 3", title = "Flow Cell: PC2 vs PC3") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+```
+
+###### Condition
+
+```{r, echo=FALSE}
+
+meta_dat %>% 
+  ggplot(aes(x = PC2, y = PC3, colour = condition)) +
+  geom_point(size = 3) +
+  scale_colour_manual(values = colpal2, name = "Condition") +
+  coord_cartesian(ylim = c(-75000, 75000), xlim = c(-100000, 100000)) +
+  labs( x = "Principle Component 2", y = "Principle Component 3", title = "Condition: PC2 vs PC3") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+```  
+
+###### Sex
+
+```{r, echo=FALSE}
+
+meta_dat %>% 
+  ggplot(aes(x = PC2, y = PC3, colour = sex)) +
+  geom_point(size = 3) +
+  scale_colour_manual(values = c("#CC79A7", "#999999"), name = "Sex") +
+  coord_cartesian(ylim = c(-75000, 75000), xlim = c(-100000, 100000)) +
+  labs( x = "Principle Component 2", y = "Principle Component 3", title = "Sex: PC2 vs PC3") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+``` 
+
+***
+
+### 3.0 Analysis  
+
+Raw counts, and not normalised counts, are required by the `limma` package` by which I will be carrying out the differential analysis (DE).  
+
+```{r}
+
+fil_miRNA <- fil_miRNA$`row.names(eFil)`
+
+eFil <- eDat %>% 
+  subset(rownames(eDat) %in% fil_miRNA)
+
+eNorm <- eFil 
+```
+
+
+#### 3.1 Controls vs NTDs in Trimester 2 samples  
+
+(Univariate Analysis)  
+
+Considering only Trimester 2 Samples, (since T1 and T3 don't have any NTD samples):  
+
+```{r control-ntd deg tri2 w/o flowCell}
+
+
+tri2p <- pDat %>% #trimester 2 phenotype
+  rownames_to_column(var = "sample") %>% 
+  filter (trimester == "2")
+
+tri2 <- as.character(tri2p$sample) 
+
+tri2g <- eNorm %>% 
+  dplyr::select(which(names(eNorm) %in% tri2p$sample))
+
+all(colnames(tri2g) == tri2p$sample)
+
+desmat_ntd <- model.matrix(~condition + sex, tri2p) #controlling only for sex!
+
+efit_ntd <- lmFit(tri2g, desmat_ntd) %>% 
+  eBayes()
+
+```  
+  
+Now here, we need to specify that we want to consider **condition** as our variable or `coefficient` of interest. Otherwise, the function relies on the default intercept which would give us the DE:  
+
+```{r}
+deg_ntd <- topTable(efit_ntd, n = Inf, adjust.method = "fdr", coef = "conditionNTD", p.value = 0.05) #specifying variable of interest as control/NTD 
+paged_table(deg_ntd)
+```  
+
+This gives 0 DEmiRNA.  
+
+***  
+
+#### 2.3 Differential miRNA by Trimester in Controls  
+
+Are there any miRNA that are DE by trimester in the control samples?  
+
+```{r by trimester in controls w/o fc}
+
+controls_p <- pDat %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter (condition == "con")
+
+control_samp <- as.character(controls_p$sample) 
+
+control_g <- eNorm %>% 
+  dplyr::select(which(names(eNorm) %in% control_samp))
+
+(controls_p$sample == names(control_g)) %>% all()
+
+controls_mat <- model.matrix(~trimester + sex, controls_p)
+
+controls_genes <- lmFit(control_g, controls_mat) 
+
+#Making contrast matrix
+conMat <- makeContrasts(
+  t2_vs_t1 = trimester2 - Intercept,
+  t3_vs_t1 = trimester3 - Intercept,
+  t3_vs_t2 = trimester3 - trimester2,
+  levels = controls_mat
+)
+
+controls_genes_cont <- contrasts.fit(controls_genes, conMat) %>% 
+  eBayes()
+
+#at FDR 0.05
+decideTests(controls_genes_cont, adjust.method = "fdr", p.value = 0.05) %>%
+  summary() 
+
+DE_wo_fc <- decideTests(controls_genes_cont, adjust.method = "fdr", p.value = 0.05) %>%
+  summary() %>% 
+  as.data.frame()
+
+
+
+#at FDR 0.01
+decideTests(controls_genes_cont, adjust.method = "fdr", p.value = 0.01) %>%
+  summary() 
+
+
+#topTable(controls_genes_cont, n = Inf, adjust.method = "fdr", p.value = 0.05)
+
+#t2 versus t1
+controls_tri2v1_list <- topTable(controls_genes_cont, n = Inf, adjust.method = "fdr", coef = 1, p.value = 0.05, sort.by = "logFC")
+nrow(controls_tri2v1_list) #241
+paged_table(controls_tri2v1_list)
+
+
+#t3 versus t1
+controls_tri3v1_list <- topTable(controls_genes_cont, n = Inf, adjust.method = "fdr", coef = 2, p.value = 0.05, sort.by = "logFC")
+nrow(controls_tri3v1_list) #283
+paged_table(controls_tri3v1_list) #logFC value too high 
+
+
+#t3 versus t2
+controls_tri3v2_list <- topTable(controls_genes_cont, n = Inf, adjust.method = "fdr", coef = 3, p.value = 0.05, sort.by = "logFC")
+nrow(controls_tri3v2_list) #120
+paged_table(controls_tri3v2_list)
+
+
+```  
+
+However, the PCA earlier showed that `flowCell` is contributing significantly to the variance observed. We also need to manually make contrasts. 
+
+```{r by trimester in controls w/flowCell}
+
+controls_mat <- model.matrix(~trimester + sex + flowCell, controls_p) #too many coefficients when including lib_flow_lane
+
+controls_genes <- lmFit(control_g, controls_mat)
+
+conMat <- makeContrasts(
+  t2_vs_t1 = trimester2 - Intercept,
+  t3_vs_t1 = trimester3 - Intercept,
+  t3_vs_t2 = trimester3 - trimester2,
+  levels = controls_mat
+)
+
+controls_genes_cont <- contrasts.fit(controls_genes, conMat) %>% 
+  eBayes()
+
+#at FDR 0.05
+decideTests(controls_genes_cont, adjust.method = "fdr", p.value = 0.05) %>%
+  summary() 
+
+DE_w_fc <- decideTests(controls_genes_cont, adjust.method = "fdr", p.value = 0.05) %>%
+  summary() %>% 
+  as.data.frame()
+
+
+
+#at FDR 0.01
+decideTests(controls_genes_cont, adjust.method = "fdr", p.value = 0.01) %>%
+  summary() 
+
+
+#topTable(controls_genes_cont, n = Inf, adjust.method = "fdr", p.value = 0.05)
+
+
+#t2 versus t1
+controls_tri2v1_list <- topTable(controls_genes_cont, n = Inf, adjust.method = "fdr", coef = 1, p.value = 0.05, sort.by = "logFC")
+nrow(controls_tri2v1_list) #161
+paged_table(controls_tri2v1_list)
+
+
+#t3 versus t1
+controls_tri3v1_list <- topTable(controls_genes_cont, n = Inf, adjust.method = "fdr", coef = 2, p.value = 0.05, sort.by = "logFC")
+nrow(controls_tri3v1_list) #207
+paged_table(controls_tri3v1_list) #logFC value too high 
+
+
+#t3 versus t2
+controls_tri3v2_list <- topTable(controls_genes_cont, n = Inf, adjust.method = "fdr", coef = 3, p.value = 0.05, sort.by = "logFC")
+nrow(controls_tri3v2_list) #80
+paged_table(controls_tri3v2_list)
+
+```  
+
+Depicting the change in DEmiRNA after adding `flowCell` in the model visaully:  
+
+```{r graph of DE w and w/o lib flow}
+
+DE_wo_fc$fc <- c("No")
+DE_w_fc$fc <- c("Yes")
+
+DE_fc <- rbind(DE_wo_fc, DE_w_fc)
+
+colnames(DE_fc) [1:2] <- c("sig", "coef")
+
+#DE_fc <- DE_fc %>% 
+#  filter(coef == "trimester2" | coef == "trimester3" )
+
+DE_fc %>% 
+  ggplot(aes(x = fc, y = Freq, fill = sig)) +
+  geom_bar(stat = "identity",position=position_dodge(), alpha = 0.8, width = 0.6) +
+  geom_text(aes(label = Freq), vjust = -0.8, colour = "#333333", position = position_dodge(0.65)) +
+  scale_fill_manual(values = cbPalette2, name = "Significance") +
+  theme_minimal() +
+  labs (title = "Difference in miRNA counts with and without including flowCell", 
+        subtitle = "At FDR 0.05", x = "flowCell included in model", y = "No. of miRNA") +
+  coord_cartesian(y = c(0,400)) +
+  facet_wrap(~coef)
+
+``` 
+
+
+```{r volcano plot, echo=FALSE, include=FALSE}
+
+#all genes df exps in con at t2
+dtp <- topTable(controls_genes_cont, n = Inf, adjust.method = "fdr", coef = 2, sort.by = "logFC")
+
+
+#dtp <- tail(dtp, -23) 
+#dtp$log <- 2^dtp$logFC
+
+# create a new "type" column and fill it with repeating "not significant" entry
+dtp$type <-  as.character("not significant") 
+
+# set those values which qualify as "up" or "down" in the "type" column of dtp based on p Value and +/- value of fold change
+dtp$type[which(dtp$adj.P.Val < 0.05 & dtp$logFC > 0.1)] = "upregulated"
+dtp$type[which(dtp$adj.P.Val < 0.05 & dtp$logFC < (-0.1) )] = "downregulated"
+dtp$type = as.factor(dtp$type)
+levels(dtp$type)
+
+sum(dtp$type == "upregulated") #19
+sum(dtp$type == "downregulated") #78
+sum(dtp$type == "not significant") #28801
+
+
+
+dtp <- dtp %>% 
+  mutate(log10 = -log10(adj.P.Val)) %>% 
+  rownames_to_column("miRNA") %>% 
+  left_join(eInfo, by = "miRNA")
+
+dtp$hsa_5p <- str_extract_all(dtp$mirbase_5p, "hsa+[-](\\w+)[-](\\w+)[-](\\w+)")
+dtp$hsa_3p <- str_extract_all(dtp$mirbase_3p, "hsa+[-](\\w+)[-](\\w+)[-](\\w+)")
+
+dtp %>% 
+  ggplot(aes(x = logFC, y = -log10(adj.P.Val), color = type)) + 
+  geom_point(shape=19, alpha=0.6, size=1.5) + 
+  #geom_vline(xintercept=c(-2,2), color = "slategray") + #add logFC 2 intercept  
+  geom_hline(yintercept=c(-log10(0.05)), color = "slategray") + # add FDR 0.05 visual threshold 
+  #geom_text_repel(aes(label=ifelse(logFC > 10000 | logFC < (-10000) | log10 > 0.05, miRNA, "")), size = 3) +
+  labs(title = "Volcano Plot of the DEmiRNA", subtitle = "", x = "Fold Change", y ="-log10(adjusted P Value)" ) +
+  scale_colour_manual(values=c("purple", "slategray", "blue"), guide=F) +
+  #coord_cartesian(xlim = c(-0.25, 0.25), ylim = c(-1,50)) # change limits of x and y axis
+  theme_minimal()
+```  
+
+Plotting `pred-kno-miR-10871-3p` as an example:
+
+```{r}
+
+top_hit <- eNorm %>% 
+  rownames_to_column(var = "sample") %>% 
+  filter(sample == "pred-kno-miR-10871-3p") %>% 
+  as.data.frame()
+
+top_hit <- t(top_hit) %>% 
+  as.data.frame()
+
+top_hit <- top_hit %>% 
+  rownames_to_column(var = "sample")
+
+colnames (top_hit) [2] <- "count"
+
+top_hit <- top_hit[-1,]
+
+str(top_hit)
+
+top_hit <- top_hit %>% 
+  mutate(count = as.character(count)) %>% 
+  mutate(count = as.numeric(count))
+
+top_hit <- top_hit %>% 
+  mutate(log = log10(count))
+
+pDat <- pDat %>% 
+  rownames_to_column(var = "sample")
+
+top_hit <- top_hit %>% 
+  inner_join(pDat, by = "sample") %>% 
+  mutate(GA = as.numeric(GA)) %>% 
+  dplyr::arrange(GA) %>% 
+  rowid_to_column(var = "IDs")
+
+pDat <- pDat %>% 
+  column_to_rownames(var = "sample")
+
+top_hit <- top_hit [c(1:4,9,11,12,13,15)]
+
+nb_cols <- 30
+mycols <- colorRampPalette(brewer.pal(8, "Set3"))(nb_cols)
+
+top_hit %>%
+  ggplot(aes (x = factor(IDs), y = log, colour = condition, shape = trimester)) +
+  geom_point(size = 2.5) +
+  scale_shape_manual(values=c(1, 17, 0)) +
+  theme_minimal() +
+  #theme(axis.text.x = element_text(angle = 90)) +
+  my_theme +
+  theme(legend.position = "bottom") +
+  labs(title = "RPM Scaled Values of pred-kno-miR-10871-3p", 
+        subtitle = "miRNA consistently highly DE between different trimesters and condition", 
+        x ="Sample", y = "log10 RPM", caption = "Samples plotted as per increase in GA") +
+  scale_color_manual(values = colpal1) +
+  #scale_color_hue(guide = F ) +
+  coord_cartesian(ylim= c(4,5.5))
+```  
+
+***  
+
+#### 2.4 miRNA Biology  
+
+The miRNAs are [annotated](https://academic.oup.com/nar/article/45/15/8731/3956630#96195884) by miRMaster as:  
+
++ **Known**: when the prediction is overlapping with a miRBase entry and both miRNAs are overlapping with known miRNAs by at least 75%.  
++ **Shifted known**: when the prediction is only partially overlapping with miRBase and only one miRNA is overlapping by at least 75% with a known miRNA.  
++ **One annotated**: when the prediction is overlapping with a miRBase entry, but only one miRNA is annotated for that entry and this one is overlapping by at least 75%.  
++ **Dissimilar overlapping**: when the prediction is overlapping with a miRBase entry, but the miRNAs are not overlapping with the annotated ones.  
++ **Half novel**: when the prediction is not overlapping with any miRBase entry, but contains at least 75% of one known miRNA.  
++ **Novel**: when the prediction is not overlapping with any miRBase entry and does not contain any known miRNA  
+
+
+```{r known and pred miRNA}
+
+controls_tri2v1_list <- controls_tri2v1_list %>% #joining sequencing info
+  rownames_to_column("miRNA") %>% 
+  inner_join(eInfo, by = "miRNA")
+
+controls_tri2v1_list %>% #categories of the DEmiRNAs
+  dplyr::select(Category) %>% 
+  dplyr::count()
+
+#base::duplicated(controls_tri2_list$miRNA)
+
+
+controls_tri3v1_list <- controls_tri3v1_list %>%
+  rownames_to_column("miRNA") %>% 
+  inner_join(eInfo, by = "miRNA")
+
+controls_tri3v1_list %>% 
+  dplyr::select(Category) %>% 
+  dplyr::count()
+
+
+controls_tri3v2_list <- controls_tri3v2_list %>%
+  rownames_to_column("miRNA") %>% 
+  inner_join(eInfo, by = "miRNA")
+
+controls_tri3v2_list %>% #categories of the DEmiRNAs
+  dplyr::select(Category) %>% 
+  dplyr::count()
+
+
+
+table(controls_tri2v1_list$miRNA %in% controls_tri3v1_list$miRNA) #common and unique DEmiRNAs in T2 and T3
+table(controls_tri3v1_list$miRNA %in% controls_tri3v2_list$miRNA)
+table(controls_tri3v2_list$miRNA %in% controls_tri2v1_list$miRNA)
+
+
+common_tri <- controls_tri2v1_list %>% #common DE miRNAs in both T2 and T3
+  semi_join(controls_tri3v1_list, by = "miRNA") %>% 
+  semi_join(controls_tri3v2_list, by = "miRNA")
+
+dim(common_tri)
+
+
+```  
+
+So, there are a 6 miRNAs with are commonly DE between trimester 1, 2 and 3.  
+
+```{r}
+
+common_tri$hsa_5p <- str_extract_all(common_tri$mirbase_5p, "hsa+[-](\\w+)[-](\\w+)[-](\\w+)")
+common_tri$hsa_3p <- str_extract_all(common_tri$mirbase_3p, "hsa+[-](\\w+)[-](\\w+)[-](\\w+)")
+
+common_tri %>% 
+  ggplot(aes(x = miRNA, y = AveExpr, fill = Category)) +
+  geom_bar(width = 0.6, stat = "identity") +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(title = "Commonly DEmiRNA between all 3 trimesters", subtitle = "", 
+       y = "Average Expression") 
+  #facet_grid(~ chromosome)
+
+common <- common_tri[c(1,2,3,6,9,10,13,18,23,30,31)]
+str(common)
+
+common$hsa_5p <- as.character(common$hsa_5p)
+common$hsa_3p <- as.character(common$hsa_3p)
+
+paged_table(common)
+
+```  
+
+Now, I wanted ot find out a little more about the miRNAs and which pathways they might be involved in (pathway enrichment). But, the biggest conundrum here is that:  
+
+1. Not all miRNAs necessarilty map to genes; there are several that are present in intergenic regions. And if they're present in genes, they could also be affecting the gene it's present it, but also it might not. And furthermore, it oculd be modulating the expression of a completely unrelated genomic sequence far from its site of existence.  
+2. If the miRNA does map to a gene, it could map to several genes. 1 gene itself can have several predicted fucntions and be involved and enriched in several pathways.  
+
+I used the `miRBaseConverter` package to obtain the latest accession numbers for the common DEmiRNAs 
+
+```{r miRBaseConverter, cache=FALSE}
+
+hsa_common <- common %>% 
+  mutate(hsa_5p_acc = miRNA_NameToAccession(hsa_5p,version ="v22"), 
+         hsa_3p_acc = miRNA_NameToAccession(common$hsa_3p,version="v22"),
+         hsa_5p_precursor = miRNA_MatureToPrecursor(common$hsa_5p,version="v22"),
+         hsa_3p_precursor = miRNA_MatureToPrecursor(common$hsa_3p,version="v22"))
+
+#result is a nx2 matrix inside a single column. Will need to unlink the matrix into two separate columns
+
+hsa_common <- do.call(data.frame, hsa_common)
+
+hsa_common <- hsa_common %>% 
+  dplyr::select(miRNA, hsa_5p, hsa_3p, everything())
+
+paged_table(hsa_common)
+
+```  
+
+Of these 6, 2 are known and annotated miRNAs, while 2 are Dissimilar Overlapping, and the last 2 are categorised as Novel. And all 6 are present on different chromosomes.  
+
+Plotting the expression of 6 miRNA:
+
+```{r DE miRNA exp df}
+
+eNorm <- eNorm %>% 
+  rownames_to_column(var = "miRNA")
+
+pDat <- pDat %>% 
+  rownames_to_column(var = "Sample")
+
+common_tri_info <- hsa_common [-c(4:19)]
+
+common_tri_info <- common_tri_info %>% 
+  mutate_all(funs(replace(., .== "character(0)", NA))) #replacing novel miRNA names with NA
+
+str(common_tri_info)
+
+common_tri_info$miRNA <- as.character(common_tri_info$miRNA)
+
+#Here, we have both 5p and 3p precursors, but we need to keep the only one that is denoted by the specific miRNA. Making a separate column showing which precursor we want  
+common_tri_info <- common_tri_info %>% 
+  mutate(End = case_when(
+    endsWith(miRNA, "5p") ~ "5p",
+    endsWith(miRNA, "3p") ~ "3p"
+  ))
+
+#Now, to make the variable having the right name of the miRNA
+common_tri_info <- common_tri_info %>% 
+  mutate(precursor = str_sub(hsa_5p, end = -4)) %>% 
+  unite("full_name", precursor:End, sep = "-") 
+
+#Replacing the novel ones with NA again, and then filling those cells in with the miRMaster predicted name for that miRNA
+common_tri_info <- common_tri_info %>% 
+  mutate_all(funs(replace(., .== "NA-5p", NA))) %>% 
+  mutate(full_name = coalesce(full_name, miRNA))
+
+#Adding the expression values of the 6 miRNAs
+common_tri_info <- common_tri_info %>% 
+  inner_join(eNorm, by = "miRNA") %>% 
+  dplyr::select(-c(hsa_3p, hsa_5p, miRNA))
+
+colnames(common_tri_info) [1] <- "miRNA"
+
+common_tri_info <- common_tri_info %>% 
+  column_to_rownames(var = "miRNA")
+
+common_tri_edat <- as.data.frame(t(common_tri_info))
+
+common_tri_edat <- common_tri_edat %>% 
+  rownames_to_column(var = "Sample")
+
+common_tri_edat <- common_tri_edat %>% 
+  inner_join(pDat, by = "Sample")
+
+common_tri_edat <- common_tri_edat [-c(8,9,10,18:36)]
+
+#library (xlsx)
+#write.xlsx(common_tri_edat, file = "Z:/Nikita/Projects/snc_placenta/data/processed/BIGX_DEmiRNA.xlsx", col.names = TRUE, row.names = TRUE, append = FALSE)  
+
+```
+
+```{r plotting DE miRNA}
+
+common_tri_edat <- common_tri_edat %>% 
+  mutate(GA = as.numeric(GA)) %>% 
+  dplyr::arrange(GA)  %>% 
+  rowid_to_column(var = "IDs") %>% 
+  pivot_longer(cols = 3:8, names_to = "miRNA", values_to = "Expression")
+
+cbPalette2 <- c("#CC79A7", "#999999", "#E69F00", "#0072B2" , "#009E73", "#D55E00")
+#pie(rep(1, 6), col = cbPalette2)
+
+common_tri_edat %>%
+  ggplot(aes (x = factor(IDs), y = log10(Expression), colour = miRNA, group = miRNA)) +
+  geom_point(size = 1) +
+  geom_line() +
+  geom_smooth(method = lm, se = FALSE) +
+  scale_colour_manual(values = cbPalette2) +
+  theme_minimal() +
+  my_theme +
+  theme(legend.position = "bottom") +
+  labs(title = "RPM Scaled Values of the 6 DE miRNA", 
+        subtitle = "FDR < 0.05", 
+        x ="Sample", y = "log10 RPM", caption = "Samples plotted as per increase in GA")
+
+common_tri_edat %>%
+  ggplot(aes (x = factor(miRNA), y = log10(Expression), fill = trimester)) +
+  geom_boxplot() +
+  scale_fill_manual(values = cbPalette2) +
+  theme_minimal() +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 10, hjust = 1)) +
+  theme(legend.position = c(1, 1),legend.justification = c("right", "top")) +
+  labs(title = "RPM Scaled Values of the 6 DE miRNA", 
+       subtitle = "Samples: T1 = 5, T2 = 16, T3 = 9", 
+       x ="miRNA", y = "log10 RPM", caption = "FDR < 0.05") 
+#facet_grid(~miRNA)
+
+
+```
+
+Let's see what information the online datatbases have for these miRNAs. When input into [miRbase](mirbase.org), for the known miRNAs, we get a bunch of information including its sequence, publications the miRNA has been mentioned in, the external links to other databases. [HGNC](https://www.genenames.org/) is a good place to start as it provides all of the relevant information and links related to the miRNA in question.  
+
+I personally like [Genecards](genecards.org) as it lists out a comprehensive summary of the query. From that website, when input for the miRNAs, the description is as follows: 
+
+
+1. [hsa-miR-148a](https://www.genecards.org/cgi-bin/carddisp.pl?id_type=hgnc&id=31535): seen to be associated with brain cancer and the Notch signalling pathway. No direct links to its expression in the placenta -  but a quick [PubMed search](https://pubmed.ncbi.nlm.nih.gov/?term=%22miR-148a%22+AND+%22placenta%22) showed that this miRNA has indeed been observed to show some placental expression in animal model studies, and also in Pre-eclampsia samples.  
+
+2. [hsa-miR-378](https://www.genecards.org/cgi-bin/carddisp.pl?id_type=hgnc&id=31871): interestingly there is some experssion observed in skeletal muscle. PubMed lead to only [1 paper](https://pubmed.ncbi.nlm.nih.gov/22454525/) coming up, however the paper is question quotes *miR-378a-5p was detected in human placenta throughout different stages of gestation and in preterm pregnancies, placental miR-378a-5p levels were lower in preeclamptic patients than in healthy controls.*  
+
+3. [hsa-miR-21](https://www.omim.org/entry/611020) - has the most documented evidence so far in terms of expression profiling.  
+
+4. [hsa-miR-758](https://www.genecards.org/cgi-bin/carddisp.pl?id_type=hgnc&id=33133#publications) gives no results on PubMed for expression in the placenta, but has been catalogued in several other cancers/disorders.  
+
+
+As alluded to above, one miRNA can have several targets. I took the example of one of the known commonly DEmiRNA (*hsa_miR-785-5p*) from the above 6, in order to explain this.    
+
+```{r example mirna gene annot}
+
+exp <- get_multimir(mirna="hsa-miR-758-5p", summary=TRUE, legacy.out=TRUE)
+sum <- exp$summary
+val <- exp$validated
+
+exp_genes <- sum %>% 
+  dplyr::select(target_symbol) %>% 
+  dplyr::count()
+
+nrow(exp_genes) #63
+head(exp_genes)
+```  
+
+This shows that the miRNA *hsa-miR-758-5p* is associated with *63 genes*. Now, selecting the *ABCF2* gene as an example, I'll check the GO terms associated with it.  
+
+```{r ABCF2 GO, cache=TRUE}
+
+test_gene <- sum %>% 
+  filter(target_symbol == "ABCF2")
+
+gene = "ABCF2"
+
+listMarts()
+mart = useMart("ensembl", dataset="hsapiens_gene_ensembl")
+go <- getBM (attributes = c("ensembl_gene_id", "go_id","name_1006", "namespace_1003"), values = gene, mart= mart)
+
+#m <- listAttributes(mart)
+
+test_gene <- test_gene %>% 
+  left_join(go, by = c ("target_ensembl" = "ensembl_gene_id"))
+
+test_gene
+
+#test_gene %>% 
+ # filter(!namespace_1003 == "") %>% 
+  #ggplot(aes(x = name_1006, fill = target_ensembl)) +
+#  geom_bar(stat = "count") +
+#  my_theme +
+#  #theme(legend.position = "none") +
+#  labs(title = "GO Terms associated with the gene ABCF1", subtitle = "Colours represent the three GO Classes", 
+ #      x = "GO Term", y = "Count") +
+#  coord_flip()
+
+```  
+
+This shows that just the 1 gene out of the 63 is associated with 4 GO terms. Given the remaining 62 genes associated with just 1 miRNA, the predicted number of all genes interacting with the 5 other miRNAs is quite high.  
+
+
+```{r, trial code, echo=FALSE, include=FALSE, eval=FALSE}
+
+dt <- miRNATest
+version=checkMiRNAVersion(dt,verbose=TRUE)
+
+result2=miRNA_AccessionToName(result1[,2],targetVersion="v22")
+result3=miRNAVersionConvert(dt,targetVersion="v22",exact=TRUE)
+result=miRNA_MatureToPrecursor(dt$miRNA_Name)
+
+result <- miRNA_NameToAccession(hsa_tri2$hsa_5p,version="v22")
+result$miRNAName_v22 <- as.factor(result$miRNAName_v22)
+result <- result[-c(1)]
+hsa_tri2 <- hsa_tri2[-c(4)]
+hsa_tri2$hsa_5p_acc.
+colnames(hsa_tri2)[4] <- "original"
+names(hsa_tri2)
+class(hsa_tri2)
+hsa_tri2 <-as.data.frame(hsa_tri2)
+alive_Accession1 = checkMiRNAAlive(hsa_tri2$hsa_3p_acc.Accession)
+getMiRNATable(version = "v22", species = "hsa")
+
+alive_Accession1
+
+example1 <- get_multimir(mirna="hsa-miR-143-5p", summary=TRUE, legacy.out=TRUE)
+sum <- example1$summary
+val <- example1$validated
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,1053 @@
+---
+title: "Exploring Steiner IBD Model Data" 
+author: Nikita Telkar 
+date: "February 11, 2021"
+output: 
+  html_document: 
+    keep_md: yes 
+    toc: true 
+    toc_depth: 4
+    toc_float: 
+      collapsed: false 
+      smooth_scroll: false 
+    theme: paper  #cosmo, paper, lumen, sandstone, simplex, yeti; cerulean, journal, flatly, darkly, readable, spacelab, united
+    highlight: espresso #tango, pygments, kate, monochrome, espresso, zenburn, haddock, textmate.
+---  
+
+### 0.0  Introduction  
+
+Here, I'm going to explore the preliminary data files obtained from the Steiner Lab for their IBD disease model project.  
+
+***
+
+### 1.0 Loading Libraries  
+
+```{r libraries, message=FALSE, error=FALSE}
+
+#data handling packages
+library(tibble)
+library(here) 
+library(tidyverse)
+library(openxlsx)
+library(data.table)
+library(rlist)
+library(readxl)
+library(DT)
+library(rmarkdown)
+library(knitr)
+library(factoextra)
+library(reshape2)
+
+#analysis packages
+library(pheatmap)
+library(limma)
+library(edgeR)
+library(irlba)
+
+#extra packages
+library(kableExtra)
+library(formatR)
+library(janitor)
+library(scales)
+library(ggpubr)
+library(RColorBrewer)
+library(showtext)
+library(gridExtra)
+
+knitr::opts_chunk$set(fig.showtext = TRUE, fig_retina = 1) #needed to render show_text
+knitr::opts_chunk$set(warning = FALSE, error = FALSE, message = FALSE)
+
+
+font_add_google("Montserrat", "Mont")
+showtext_auto()
+
+my_theme <- theme_minimal() +
+  theme(plot.title = element_text(family = "Mont", size = 14),
+        plot.subtitle = element_text(family = "Mont", size = 12),
+        legend.text = element_text(family = "Mont", size = 10),
+        axis.title = element_text(family = "Mont", size = 14))
+
+cbPalette <- c("#56B4E9", "#E69F00", "#009E73", "#0072B2", "#D55E00", "#999999")
+cbPalette2 <- c("#CC79A7", "#999999", "#E69F00", "#0072B2" , "#009E73", "#D55E00")
+#pie(rep(1, 6), col = cbPalette2)
+
+```  
+
+### 2.0 Abbreviations and Background  
+
+| Abbreviation | Full Form |  
+| -- | -- |
+| US | Untreated |  
+| RD | Rounds of Damage |  
+| FliC | Flagellin - bacteria to introduce inflammation |  
+| ALI | Air liquid interface |   
+
+Samples:  
+2 sites from 2 donors  
+
+1. 59C  
+2. 75C  
+
+- Cells harvested from colon biopsies were grown in a monolayer for 10 days.  
+- ALI for 7 days (to allow cells to differentiate)  
+- Add media for 4 hours 
+- +/- Flic for 3 hours  
+- Re- ALI for 3 days  
+- Repeat 5 times  
+
+### 3.0 Comparisons  
+
+1. Day 10 (undifferentiated baseline) vs Day 7 ALI (differentiated baseline)  
+    + Day 7 ALI should show genes enriched in cell patterning markers  
+    + Day 10 would have a more homogeneous profile with upregulated cell growth genes  
+2. US RD1 vs US RD5  
+    + Are damage response genes heavily over expressed at RD5?  
+    + Which genes are downregulated?  
+3. US RD1 vs FliC RD1
+    + Expression profiles should be drastically different with FliC RD1 showing exponentially increased immune/infection response and cell-cycle damage genes  
+4. FliC RD1 vs Flic RD5  
+    + Do infection response genes consistently rise or reach a plateau?  Or do they stop responding after a while?  
+5. 
+
+
+Let's take a look at all of the files that we have, taking Day 10 vs ALI Day 7 as an example:  
+
+```{r d10_alid7}
+
+setwd("Z:/Nikita/Projects/ibd_steiner")
+
+sample <- read.table(here::here("data", "DESeq2", "Day-10_vs_ALI_Day7", "samples.txt"))
+sample
+
+counts <- utils::read.csv(here::here("data", "DESeq2", "Day-10_vs_ALI_Day7", "Day10_vs_ALID7.deseq.counts.csv"))
+head(counts)
+
+res <- utils::read.csv(here::here("data", "DESeq2", "Day-10_vs_ALI_Day7", "Day10_vs_ALID7.deseq.res.csv"))
+head(res)
+#padj = BH
+
+rlog <- utils::read.csv(here::here("data", "DESeq2", "Day-10_vs_ALI_Day7", "Day10_vs_ALID7.deseq.rlog.csv"))
+head(rlog)
+
+metrics <- utils::read.csv(here::here("data", "DESeq2", "Day-10_vs_ALI_Day7", "deseq.metrics.csv"))
+metrics
+#differential = res$padj < 0.05
+
+dendogram <- utils::read.csv(here::here("data", "DESeq2", "Day-10_vs_ALI_Day7", "GeneDendrogram.csv"))
+head(dendogram)
+#doesn't have gene labels?
+
+dim(res)
+res <- na.omit(res)
+
+#volcano plot
+res <- res %>% 
+  mutate(Significant = case_when(
+    log2FoldChange > 1 & padj < 0.05 ~ "Yes",
+    log2FoldChange > 1 & padj > 0.05 ~ "No",
+    log2FoldChange < -1 & padj < 0.05 ~ "Yes",
+    log2FoldChange < -1 & padj > 0.05 ~ "No",
+    between(log2FoldChange, -1, 1) & padj < 0.05 ~ "No",
+    between(log2FoldChange, -1, 1) & padj > 0.05 ~ "No"
+  )
+  ) 
+
+#log2FC = 1 --> 2x more, 2 --> 4x more
+
+res %>% 
+  ggplot(aes(x = log2FoldChange, y = -log10(padj), colour = Significant)) +
+  geom_point() + 
+  coord_cartesian(x=c(-3.5,3.5)) +
+  geom_vline(xintercept = c(-1, 1), color = "#999999") +
+  geom_hline(yintercept = c(-log10(0.05)), color = "#999999") +
+  scale_colour_manual(values = c("#333333", "#0099ff"), guide=F) 
+
+```
+
+Loading all res files from all comparisons:
+
+```{r}
+
+#res_all <- list.files(pattern = "res.csv$", recursive = TRUE) --> doesn't work, but works in console. 
+
+#list.files() --> directory is the R folder for some reason, even tho here(), and getwd() is ibd_steiner. Will have to put in absolute path itself
+
+res_all <- list.files(path = "Z:/Nikita/Projects/ibd_steiner", pattern = "res.csv$", recursive = TRUE)
+
+res_all
+
+res_all <- lapply(res_all, utils::read.csv)
+
+#need to setwd to ibd_steiner + also check Knit directory and change to working directory
+
+df_names <- c("d10_alid7", "d10_flicRD1", "d10_flicRD5", "d10_RD1", "d10_RD5", "RD1_flicRD1", "RD5_flicRD5", "RD5_RD1", "flicRD5_flicRD1") 
+  
+names(res_all) <- df_names
+
+```  
+
+### 4.0 Making the expression and phenotype dataframes  
+
+#### 4.1 Making pDat  
+
+```{r pDat}
+
+pDat <- data.frame("Sample_ID" = c("59C", "75C"), "Sample_Number" = c("1", "2"), "Sex" = c("Female", "Male"), "Age" = c(49, 58), "Biopsy_Region" = c("Transverse", "Ascending"))
+
+pDat <- pDat %>% 
+  slice(rep(1:n(), each = 6)) #since we have 6 conditions, and 2 samples for each condition
+
+pDat <- as.data.frame(t(pDat))
+
+df_names_all <- c("59C_Day10", "59C_ALI_Day7", "59C_US_RD1", "59C_US_RD5", "59C_flic_RD1", "59C_flicRD5", "75C_Day10", "75C_ALI_Day7", "75C_US_RD1", "75C_US_RD5", "75C_flic_RD1", "75C_flicRD5")
+colnames (pDat) <- df_names_all
+pDat <- pDat [-1,]
+
+pDat <- as.data.frame(t(pDat))
+
+pDat$Condition <- as.factor(c("Day_10", "ALI_Day7", "US_RD1", "US_RD5", "flic_RD1", "flicRD5"))
+pDat$Condition <- fct_relevel(c("Day_10", "ALI_Day7", "US_RD1", "US_RD5", "flic_RD1", "flicRD5"))
+
+condition_level <- c("Day_10", "ALI_Day7", "US_RD1", "US_RD5", "flic_RD1", "flic_RD5")
+
+pDat <- pDat %>% 
+  dplyr::arrange(factor(Condition, levels = condition_level))
+
+pDat <- pDat %>% 
+  rownames_to_column(var = "group")
+
+pDat$ID <- pDat$group
+pDat$ID <- str_sub(pDat$ID, 1, 3)
+pDat$ID <- as.factor(pDat$ID)
+
+str(pDat)
+
+pDat <- pDat %>% 
+  column_to_rownames(var = "group")
+
+#write.xlsx(pDat, file = here::here("data", "Processed", "ibd_pDat.xlsx"), col.names = TRUE, row.names = TRUE)
+```  
+
+#### 4.2 Making eDat  
+
+```{r edat}
+
+#reading in raw counts
+raw <- list.files(pattern = ".counts.csv$", recursive = TRUE)
+raw <- map(raw, read.csv)
+names(raw) <- df_names
+raw <- map(raw, function(x) {colnames(x)[1] <- "gene"; x} )
+
+#binding all raw counts to create one df
+eDat <- raw[[1]] #using d10_ali7 as base df
+
+eDat <- eDat %>% 
+  inner_join(raw[[8]]) %>%  # joining RD1 and RD5 counts 
+  inner_join(raw[[9]]) #joining flicRD1 and flicRD5 counts
+
+eDat <- eDat %>% 
+  as.tibble() %>% 
+  tibble::column_to_rownames(var = "gene") 
+
+eDat <- eDat %>% 
+  dplyr::select(1,3,5,7,9,11, everything())
+
+#order is all messed up
+#RD1 vs RD5 is 59C, 75C, 75C, 59C
+eDat <- eDat %>% 
+  dplyr::select(1,2,4,3,6,5,7,8,10,9,12,11)
+
+eDat <- eDat %>% 
+  dplyr::select(1,2,9,4:8,3,10:12)
+names(eDat)
+
+colnames(eDat) <- row.names(pDat)
+
+dim(eDat) #26,364 genes
+
+eDat <- eDat %>% 
+  rownames_to_column(var = "gene")
+#write.xlsx(eDat, file = here::here("data", "Processed", "ibd_eDat_raw.xlsx"), col.names = TRUE, row.names = TRUE)
+
+eDat <- eDat %>% 
+  column_to_rownames(var = "gene")
+
+#RLE norm
+genes <- as.data.frame(row.names(eDat))
+norm <- DGEList(counts = eDat, samples = pDat, genes = genes)
+eDat_norm <- calcNormFactors(norm, method = "RLE") 
+eDat_norm <- cpm(eDat_norm)
+eDat_norm <- as.data.frame(eDat_norm)
+
+eDat_norm <- eDat_norm %>% 
+  rownames_to_column(var = "gene")
+
+#filtering by at least 0.01 count in all samples
+eNorm <- eDat_norm %>% 
+  filter_if(is.numeric, all_vars(. > 0.01)) %>% 
+  #otherwise we loose genes that in one condition might have very low, but quite high in the others (eg  REN)
+  column_to_rownames(var = "gene")
+
+dim(eNorm) #14,173 genes
+#write.xlsx(eNorm, file = here::here("data", "Processed", "ibd_eDat_norm.xlsx"), col.names = TRUE, row.names = TRUE)
+
+eDat_norm <- eDat_norm %>% 
+  column_to_rownames(var = "gene")
+
+#log2 transform counts for vizualization
+eNorm_log2 <- log2(eNorm)
+
+```
+
+
+### 5.0 Exploratory Analysis 
+
+#### 5.1 Volcano Plots  
+
+```{r volcano plots for all dfs}
+
+#removing all NAs
+res_all <- lapply(res_all, na.omit)
+
+#function to make the significance column for each df in the list
+sign_column <- function(x) {
+  x %>% 
+    dplyr::mutate(Significant = case_when(
+      log2FoldChange > 1 & padj < 0.05 ~ "Yes",
+      log2FoldChange > 1 & padj > 0.05 ~ "No",
+      log2FoldChange < -1 & padj < 0.05 ~ "Yes",
+      log2FoldChange < -1 & padj > 0.05 ~ "No",
+      between(log2FoldChange, -1, 1) & padj < 0.05 ~ "No",
+      between(log2FoldChange, -1, 1) & padj > 0.05 ~ "No"
+    )
+    ) 
+}
+
+res_all <- lapply(res_all, sign_column)
+
+vplots <- list() #creating an empty list to store all the plots.
+
+#for loop to make plots for each miRNA. Cannot figure out how to wr loop in a function
+for (i in seq_along(res_all)){
+  x <- ggplot(res_all[[i]], aes(x = log2FoldChange, y = -log10(padj), colour = Significant)) +
+    geom_point() +
+    coord_cartesian(x=c(-5,5), y=c(0,80)) +
+    geom_vline(xintercept = c(-1, 1), color = "#999999") +
+    geom_hline(yintercept = c(-log10(0.05)), color = "#999999") +
+    scale_colour_manual(values = c("#999999", "#0099ff"), guide = F) +
+    labs(x = "log2FC", y = "-log10Pvalue", subtitle = "Significant genes (in blue) = BH corrected FDR < 0.05 and log2FC > 1") +
+    ggtitle(names(res_all[i])) +
+    my_theme
+  vplots[[i]] <- x
+}
+
+names(vplots) <- df_names
+
+#vplots
+#Hmm, the y-axis is too small for all but d10_RD1 and d10_flicRD1. Let's take those two out and plot them separately.  
+
+d10_RD1 <- res_all[[4]]
+
+d10_flicRD1 <- res_all[[2]]
+
+vplots[c("d10_RD1", "d10_flicRD1")] <- NULL
+
+gd10_RD1 <- d10_RD1 %>% 
+  ggplot(aes(x = log2FoldChange, y = -log10(padj), colour = Significant)) +
+  geom_point() +
+  coord_cartesian(x=c(-5,5), y=c(0,175)) +
+  geom_vline(xintercept = c(-1, 1), color = "#999999") +
+  geom_hline(yintercept = c(-log10(0.05)), color = "#999999") +
+  scale_colour_manual(values = c("#999999", "#0099ff"), guide = F) +
+  labs(x = "log2FC", y = "-log10Pvalue", title = "d10_RD1", subtitle = "Significant genes (in blue) = BH corrected FDR < 0.05 and log2FC > 1") +
+  my_theme
+
+gd10_flicRD1 <- d10_flicRD1 %>% 
+  ggplot(aes(x = log2FoldChange, y = -log10(padj), colour = Significant)) +
+  geom_point() +
+  coord_cartesian(x=c(-5,5), y=c(0,100)) +
+  geom_vline(xintercept = c(-1, 1), color = "#999999") +
+  geom_hline(yintercept = c(-log10(0.05)), color = "#999999") +
+  scale_colour_manual(values = c("#999999", "#0099ff"), guide = F) +
+  labs(x = "log2FC", y = "-log10Pvalue", title = "d10_flicRD1", subtitle = "Significant genes (in blue) = BH corrected FDR < 0.05 and log2FC > 1") +
+  my_theme
+  
+vplots
+gd10_RD1
+gd10_flicRD1
+
+
+#making table of how many significant genes at BH corrected FDR < 0.05 and log2FC > 1
+significant_metrics <- lapply(res_all, function(x) x %>%  dplyr::count(Significant) %>% 
+                                pivot_wider(names_from = Significant, values_from = n))
+
+significant_metrics <- do.call(rbind, significant_metrics)
+datatable(significant_metrics)
+
+#write.xlsx(significant_metrics, file = here::here("data", "Processed", "significant_metrics.xlsx"), colNames = TRUE, row.names = TRUE)
+
+```
+
+
+```{r}
+#checking to see if the significant 'yes' I get matches the significant number in the metrics file for d10_ali7 and 
+res_all[[1]] %>% 
+  dplyr::count(Significant)
+
+res_all[[8]] %>% 
+  dplyr::count(Significant)
+
+#Yes, they do. Perfect
+
+
+#saveRDS(res_all, file = here::here("data", "Processed", "res_all.RDS"))
+
+``` 
+
+#### 5.2 Clustering  
+
+
+```{r clustering, fig.height =7, fig.width=10}
+
+sample_cor <- eNorm %>% 
+  cor()
+
+nb_cols <- 8
+colour_pal <- colorRampPalette(brewer.pal(9, "Greens"))(nb_cols)
+sample_number <- c(`1` = "D55E00", `2` ="#E69F00")
+sex_col <- c("#eeccff", "#99ceff")
+
+annot_cols <- list(Sample_Number = c(`1` = "#eeccff", `2` = "#99ceff"))
+
+h1 <- sample_cor %>% 
+  pheatmap(clustering_distance_cols = "euclidean", clustering_method = "complete", cluster_rows = TRUE,
+    show_colnames = TRUE, show_rownames = TRUE, color = colour_pal, 
+    main = "Sample Correlations", annotation_row = pDat[c("Sample_Number")], 
+    annotation_col = pDat[c("Sample_Number")], 
+    annotation_colors = annot_cols)
+
+```
+
+#### 5.3 Heatmap  
+
+**For heatmaps, as we want to compare the relative expression between conditions, it's better to use Z-scores of our log2 transformed RPM counts which have been normalized.
+
+```{r heatmap, cache=TRUE, fig.width=10, fig.height=10}
+
+#as we want the z-score per gene, and not per sample, we need to transpose the df so that genes are in columns, and samples in rows, as the scale function performs the function on columns
+
+#z-score of log2RPM-RLE for heatmaps
+t_eNorm <- as.data.frame(t(eNorm_log2))
+eNorm_scale <- scale(t_eNorm, center = TRUE, scale = TRUE)
+eNorm_scale <- as.data.frame(t(eNorm_scale))
+#write.xlsx(eNorm_scale, file = here::here("data", "Processed", "ibd_eNorm_z-scores.xlsx"), col.names = TRUE, row.names = TRUE)
+
+
+#finding out the max value of our eNorm_scale
+range <- max(abs(eNorm_scale))
+#setting colour white in our heatmaps to 0
+breaks <- seq(-range, range, length.out = 100)
+
+heatmap_cols = colorRampPalette(c("blue", "white", "red"))(99)
+
+h2 <- eNorm_scale %>% 
+  pheatmap(clustering_distance_cols = "euclidean", clustering_method = "complete", cluster_rows = TRUE, show_colnames = TRUE, show_rownames = FALSE, color = heatmap_cols, breaks = breaks,
+    main = "Sample-Gene Heatmap", annotation_row = pDat[c("Sample_Number")], 
+    annotation_col = pDat[c("Sample_Number")], 
+    annotation_colors = annot_cols)
+
+eNorm_scale[c(1,3,5,7,9,11)] %>% 
+   pheatmap(clustering_distance_cols = "euclidean", clustering_method = "complete", cluster_rows = TRUE, show_colnames = TRUE, show_rownames = FALSE, color = heatmap_cols, breaks = breaks,
+    main = "Sample-Gene Heatmap: Sample 1", annotation_row = pDat[c("Sample_Number")], 
+    annotation_col = pDat[c("Sample_Number")], 
+    annotation_colors = annot_cols)
+
+eNorm_scale[c(2,4,6,8,10,12)] %>%
+   pheatmap(clustering_distance_cols = "euclidean", clustering_method = "complete", cluster_rows = TRUE, show_colnames = TRUE, show_rownames = FALSE, color = heatmap_cols, breaks = breaks,
+    main = "Sample-Gene Heatmap: Sample 2", annotation_row = pDat[c("Sample_Number")], 
+    annotation_col = pDat[c("Sample_Number")], 
+    annotation_colors = annot_cols)
+
+```  
+
+#### 5.3 Sample Distribution    
+
+```{r boxplot and density plot}
+
+e_melt <- melt(eNorm_log2)
+colnames (e_melt) <- c("sample", "expression")
+raw_melt <- melt(eDat)
+colnames (raw_melt) <- c("sample", "expression")
+
+samp_cols = c("#56B4E9", "#0072B2", "#47d147", "#009E73", "#ff3333" ,"#b30000", "#ffad33", "#e68a00", "#c266ff", "#7a00cc", "#bfbfbf" ,"#666666")
+
+#density plots
+
+raw_melt %>%
+  ggplot(aes(log2(expression), color = sample, fill = sample)) +
+  geom_density(alpha = 0.1) + 
+  # theme(legend.position = "bottom", legend.text = element_text(size = 17)) +
+  theme(legend.position = c(.95, .95),legend.justification = c("right", "top")) +
+  scale_fill_manual(values = samp_cols) +
+  scale_colour_manual(values = samp_cols) +
+  my_theme +
+  #guides(color = guide_legend(nrow = 2)) +
+  labs(x = "log2RPM", y = "Density", title = "Sample Distribution - Density Plot", subtitle = "Non-normalized data\n")
+
+e_melt %>%
+  ggplot(aes(expression, color = sample, fill = sample)) +
+  geom_density(alpha = 0.1) + 
+  # theme(legend.position = "bottom", legend.text = element_text(size = 17)) +
+  theme(legend.position = c(.95, .95),legend.justification = c("right", "top")) +
+  scale_fill_manual(values = samp_cols) +
+  scale_colour_manual(values = samp_cols) +
+  my_theme +
+  #guides(color = guide_legend(nrow = 2)) +
+  labs(x = "log2RPM", y = "Density", title = "Sample Distribution - Density Plot", subtitle = "RLE Normalized data\n")
+
+#boxplot of normalized
+e_melt %>%
+  ggplot(aes(x = sample, y = expression, fill=sample)) +
+  geom_boxplot() +
+  scale_fill_manual(values = samp_cols) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(x = "Samples", y = "log2RPM of Normalized Counts", title = "Sample Distributions - Box Plot\n")
+
+```
+
+
+### 6.0 PCA
+
+```{r mds, eval=FALSE, include=FALSE, echo=FALSE}
+
+group <- pDat$Condition
+col_group <- group
+col_group <- as.factor(col_group)
+levels(col_group) <- cbPalette
+col_group <- as.character(col_group)
+
+plotMDS(eNorm, labels = group, col = col_group)
+
+```  
+
+```{r pca}
+
+#on eNorm
+t_eLog <- as.data.frame(t(eNorm_log2))
+
+pca <- prcomp(t_eLog, scale=FALSE, center=TRUE) #n has to be less than number of samples
+
+scores <- pca$x
+
+pca_scores <- pca$x %>% 
+  as_tibble() %>% 
+  mutate(Sample_Name = row.names(pDat)) 
+
+mDat <- cbind(pDat, pca_scores)
+
+#on raw
+# raw_log <- log2(raw)
+# t_raw <- as.data.frame(t(log2(eDat)))
+# pca_raw <- prcomp(t_raw, scale=FALSE, center=TRUE) #n has to be less than number of samples
+# scores_raw <- pca_raw$x
+# pca_scores_raw <- pca_raw$x %>% 
+#   as_tibble() %>% 
+#   mutate(Sample_Name = row.names(pDat)) 
+# metaraw <- cbind(pDat, pca_scores_raw)
+
+```
+
+#### PC1 versus PC2 {.tabset}  
+
+##### Samples  
+
+Using the RLE normalized read counts, and not the raw data (however both look similar)  
+
+```{r pca samples}
+
+mDat %>% 
+  ggplot(aes(x = PC1, y = PC2, colour = Sample_Name)) +
+  geom_point(size = 3) +
+  coord_cartesian(ylim = c(-70, 70), xlim = c(-70, 70)) +
+  labs( x = "Principle Component 1", y = "Principle Component 2", title = "Samples: PC1 vs PC2") +
+  scale_colour_manual(values = samp_cols) +
+  theme_minimal() 
+
+```  
+
+##### Condition  
+
+```{r pca condition}
+
+mDat %>% 
+  ggplot(aes(x = PC1, y = PC2, colour = Condition)) +
+  geom_point(size = 3) +
+  coord_cartesian(ylim = c(-70, 70), xlim = c(-70, 70)) +
+  labs( x = "Principle Component 1", y = "Principle Component 2", title = "Condition: PC1 vs PC2") +
+  scale_colour_manual(values = cbPalette) +
+  theme_minimal() 
+
+```
+
+##### Sample Number / Sex  
+
+```{r pca sex}
+
+mDat %>%
+  ggplot(aes(x = PC1, y = PC2, colour = ID)) +
+  geom_point(size = 3) +
+  coord_cartesian(ylim = c(-70, 70), xlim = c(-70, 70)) +
+  labs( x = "Principle Component 1", y = "Principle Component 2", title = "Sample ID: PC1 vs PC2") +
+  scale_colour_manual(values = sex_col) +
+  theme_minimal() 
+
+```
+
+### 7.0 DEGs  
+
+```{r deg raw}
+
+res_all2 <- map(res_all, function(x) x %>% dplyr::arrange(padj))
+
+res_all2 <- map(res_all2, head, 10)
+
+res_all3 <- Reduce(intersect, list(res_all2, "GeneName")) 
+#no common de genes
+
+res_all3 <- map(res_all2, function (x) x %>% dplyr::select(GeneName))
+res_all3 <- rbindlist(res_all3, idcol = TRUE)
+
+res_all3 %>% 
+  dplyr::count(GeneName) %>% 
+  arrange(desc(n))
+
+res_all3 %>% 
+  filter(GeneName == "REN" | GeneName == "TFF2")
+
+```
+
+The REN and TFF2 genes are the 2 showing DE in 5 of the 9 conditions. Let's look at the raw counts, and plot the change in expression.  
+
+```{r REN}
+
+#eNorm <- eNorm %>% 
+ # rownames_to_column(var = "gene")
+
+#Plotting counts for REN
+REN <- map(raw, function(x) x %>% filter(gene == "REN"))
+REN <- rbindlist(REN, fill = TRUE) #otherwise NAs values get deleted
+REN <- as.data.frame(t(REN))
+REN <- REN[-1,]
+REN <- REN %>% 
+  rownames_to_column(var = "group")
+REN <- melt(REN, id.vars = "group")
+REN <- na.omit(REN)
+REN <- REN %>% 
+  distinct(group, .keep_all = TRUE) #cause same reading multiple times as each individual csv contains counts of the comparisons.
+REN$sample <- c("1", "2")
+REN$original <- REN$group
+REN$original <- str_sub(REN$original, 6)
+REN$original <- as.factor(REN$original)
+REN$original <- fct_relevel(REN$original, c("Day.10", "ALI.D7", "US.RD1.D3", "US.RD5.D3", "FliC.RD1.D3", "FliC.RD5.D3")) #from undamaged --> most undamaged
+REN$value <- as.numeric(REN$value)
+
+REN %>% 
+  ggplot(aes(x = original, y = log2(value), fill = sample)) +
+  geom_bar(stat = "identity", position = position_dodge(), alpha = 0.8, width = 0.6) +
+  geom_text(aes(label = value), vjust = -0.8, colour = "#333333", position = position_dodge(0.65)) +
+  scale_fill_manual(values = sex_col) +
+ # coord_cartesian(y = c(0,15)) +
+  scale_y_continuous(expand = expansion(mult = c(0, .09))) +
+  labs(x = "Group", y = "log2RPM Expression", title = "Raw Counts of REN", subtitle = "Floating numbers indicate RPM") +
+  my_theme
+
+``` 
+
+However, we should really compare the normalized counts.  
+
+```{r REN norm}
+
+eNorm <- eNorm %>% 
+  rownames_to_column(var = "gene")
+
+pDat <- pDat %>% 
+  rownames_to_column(var = "group")
+
+REN_norm <- eNorm %>% 
+  filter(gene == "REN")
+REN_norm <- as.data.frame(t(REN_norm))
+REN_norm <- REN_norm %>% 
+  rownames_to_column(var = "group")
+colnames(REN_norm) <- REN_norm[1,]
+REN_norm <- REN_norm[-1,]
+REN_norm <- REN_norm %>% 
+  inner_join(pDat, by = c("gene" = "group"))
+REN_norm$REN <- as.numeric(REN_norm$REN)
+REN_norm$REN <- round(REN_norm$REN, digits = 0)
+REN_norm$Condition <- as.factor(REN_norm$Condition)
+REN_norm$Condition <- fct_relevel(REN_norm$Condition, c("Day_10", "ALI_Day7", "US_RD1", "US_RD5", "flic_RD1", "flicRD5"))
+str(REN_norm)
+
+REN_norm %>% 
+  ggplot(aes(x = Condition, y = log2(REN), fill = Sample_Number)) +
+  geom_bar(stat = "identity", position = position_dodge(), alpha = 0.8, width = 0.6) +
+  geom_text(aes(label = REN), vjust = -0.8, colour = "#333333", position = position_dodge(0.65)) +
+  scale_fill_manual(values = sex_col) +
+  #coord_cartesian(y = c(0,250)) +
+  scale_y_continuous(expand = expansion(mult = c(0, .09))) +
+  labs(x = "Group", y = "log2RPM Expression", title = "Normalized Expression of REN", subtitle = "Floating numbers indicate RPM") +
+  my_theme
+
+```
+
+
+```{r TFF2, eval=FALSE, echo=FALSE, include=FALSE}
+
+#Plotting counts for REN
+TFF2 <- map(raw, function(x) x %>% filter(gene == "TFF2"))
+TFF2 <- rbindlist(TFF2, fill = TRUE) #otherwise NAs values get deleted
+TFF2 <- as.data.frame(t(TFF2))
+TFF2 <- TFF2[-1,]
+TFF2 <- TFF2 %>% 
+  rownames_to_column(var = "group")
+TFF2 <- melt(TFF2, id.vars = "group")
+TFF2 <- na.omit(TFF2)
+TFF2 <- TFF2 %>% 
+  distinct(group, .keep_all = TRUE) #cause same reading multiple times as each individual csv contains counts of the comparisons.
+TFF2$sample <- c("1", "2")
+TFF2$original <- TFF2$group
+TFF2$original <- str_sub(TFF2$original, 6)
+TFF2$original <- as.factor(TFF2$original)
+TFF2$original <- fct_relevel(TFF2$original, c("Day.10", "ALI.D7", "US.RD1.D3", "US.RD5.D3", "FliC.RD1.D3", "FliC.RD5.D3")) #from undamaged --> most undamaged
+TFF2$value <- as.numeric(TFF2$value)
+
+TFF2 %>% 
+  ggplot(aes(x = original, y = log2(value), fill = sample)) +
+  geom_bar(stat = "identity", position = position_dodge(), alpha = 0.8, width = 0.6) +
+  geom_text(aes(label = value), vjust = -0.8, colour = "#333333", position = position_dodge(0.65)) +
+  scale_fill_manual(values = sex_col) +
+  #coord_cartesian(y = c(0,15)) +
+  scale_y_continuous(expand = expansion(mult = c(0, .09))) +
+  labs(x = "Group", y = "log2RPM Expression", title = "Expresion of TFF2", subtitle = "Floating numbers indicate RPM") +
+  my_theme
+  
+```
+
+```{r TFF2 norm}
+
+TFF2_norm <- eNorm %>% 
+  filter(gene == "TFF2")
+TFF2_norm <- as.data.frame(t(TFF2_norm))
+TFF2_norm <- TFF2_norm %>% 
+  rownames_to_column(var = "group")
+colnames(TFF2_norm) <- c("group", "count")
+TFF2_norm <- TFF2_norm[-1,]
+TFF2_norm <- TFF2_norm %>% 
+  inner_join(pDat, by = "group")
+TFF2_norm$count <- as.numeric(TFF2_norm$count)
+TFF2_norm$count <- round(TFF2_norm$count, digits = 0)
+TFF2_norm$Condition <- as.factor(TFF2_norm$Condition)
+TFF2_norm$Condition <- fct_relevel(TFF2_norm$Condition, c("Day_10", "ALI_Day7", "US_RD1", "US_RD5", "flic_RD1", "flicRD5"))
+str(TFF2_norm)
+
+TFF2_norm %>% 
+  ggplot(aes(x = Condition, y = log2(count), fill = Sample_Number)) +
+  geom_bar(stat = "identity", position = position_dodge(), alpha = 0.8, width = 0.6) +
+  geom_text(aes(label = count), vjust = -0.8, colour = "#333333", position = position_dodge(0.65)) +
+  scale_fill_manual(values = sex_col) +
+  #coord_cartesian(y = c(0,600)) +
+  scale_y_continuous(expand = expansion(mult = c(0, .09))) +
+  labs(x = "Group", y = "log2RPM Expression", title = "Normalized Expression of TFF2", subtitle = "Floating numbers indicate RPM") +
+  my_theme
+
+```
+
+```{r degs}
+
+FCGBP	<- eNorm %>% filter(gene == "FCGBP")
+CA9	<- eNorm %>% filter(gene == "CA9")
+CKB <- eNorm %>% filter(gene == "CKB")
+EGLN3 <- eNorm %>% filter(gene == "EGLN3")
+
+deg_names <- c("FCGBP", "CA9", 'CKB', "EGLN3")
+
+degs <- list(FCGBP, CA9, CKB, EGLN3)
+names(degs) <- deg_names
+
+deg_formatting <- function (x) {
+  x <- as.data.frame(t(x))
+  x <- x %>% 
+    rownames_to_column(var = "group")
+  colnames(x) <- c("group", "count")
+  x <- x[-1,]
+  x <- x %>% 
+    inner_join(pDat, by = "group")
+  x$count <- as.numeric(x$count)
+  x$count <- round(x$count, digits = 0)
+  x$Condition <- as.factor(x$Condition)
+  x$Condition <- fct_relevel(x$Condition, c("Day_10", "ALI_Day7", "US_RD1", "US_RD5", "flic_RD1", "flicRD5"))
+  return(x)
+}
+
+degs <- map(degs, function(x) x %>% deg_formatting())
+deg_plots <- list()
+
+for (i in seq_along(degs)) {
+  x <- ggplot(degs[[i]], (aes(x = Condition, y = log2(count), fill = Sample_Number))) +
+    geom_bar(stat = "identity", position = position_dodge(), alpha = 0.8, width = 0.6) +
+    geom_text(aes(label = count), vjust = -0.8, colour = "#333333", position = position_dodge(0.65)) +
+    scale_fill_manual(values = sex_col) +
+    coord_cartesian(y = c(0,10)) +
+    scale_y_continuous(expand = expansion(mult = c(0, .09))) +
+    labs(x = "Group", y = "log2RPM Expression", subtitle = "Floating numbers indicate normalized RPM") +
+    ggtitle(names(degs[i])) +
+    my_theme
+  deg_plots[[i]] <- x
+}
+
+deg_plots
+
+```
+
+```{r deg2}
+ 
+deg2 <- c("TFF", "DKK1", "LOXL4", "GPX3", "GSTA1", "OTC", "LCN2", "UBD", "DUOX2", "CCL20", "HSD3B2", "LOC101928100", "ANKRD1")
+#12
+
+deg2 <- eNorm %>% 
+  filter(gene %in% deg2)
+
+deg2
+#10, not present - GSTA1,TFF
+#GSTA2, GSTA4, 3 TFF genes
+
+deg2_names <- deg2$gene
+deg2 <- split(deg2, seq(nrow(deg2))) #make each row i.e. gene a separate element in a list
+names(deg2) <- deg2_names
+
+deg2 <- map(deg2, function(x) x %>% deg_formatting())
+deg2_plots <- list()
+
+for (i in seq_along(deg2)) {
+  x <- ggplot(deg2[[i]], (aes(x = Condition, y = log2(count), fill = Sample_Number))) +
+    geom_bar(stat = "identity", position = position_dodge(), alpha = 0.8, width = 0.6) +
+    geom_text(aes(label = count), vjust = -0.8, colour = "#333333", position = position_dodge(0.65)) +
+    scale_fill_manual(values = sex_col) +
+    coord_cartesian(y = c(0,10)) +
+    scale_y_continuous(expand = expansion(mult = c(0, .09)))+
+    labs(x = "Group", y = "log2RPM Expression", subtitle = "Floating numbers indicate normalized RPM\n") +
+    ggtitle(names(deg2[i])) +
+    my_theme
+  deg2_plots[[i]] <- x
+}
+
+deg2_plots
+
+``` 
+
+```{r deg heatmap}
+
+all_deg_names <- c("REN", "FCGBP", "CA9", 'CKB', "EGLN3", "TFF2", "DKK1", "LOXL4", "GPX3", "GSTA1", "OTC", "LCN2", "UBD", "DUOX2", "CCL20", "HSD3B2", "LOC101928100", "ANKRD1")
+
+pDat <- pDat %>% 
+  column_to_rownames(var = "group")
+
+eNorm_scale <- eNorm_scale %>% 
+  rownames_to_column(var = "gene")
+
+all_degs <- eNorm_scale %>% 
+  filter(gene %in% all_deg_names) %>% 
+  column_to_rownames(var = "gene")
+
+all_degs %>% 
+  pheatmap(clustering_distance_cols = "euclidean", clustering_method = "complete", cluster_rows = TRUE, color = heatmap_cols, breaks = breaks,
+    show_colnames = TRUE, show_rownames = TRUE,
+    annotation_col = pDat[c("Sample_Number")], annotation_colors = annot_cols,
+    main = "Top DEGs Heatmap: Z-Scores of log2RPM-RLE Normalized Counts")
+
+# h3 <- all_degs %>% 
+#   dplyr::slice(1:16, 18) #cause LCN2 has expression in the 1000s
+# 
+# h3 %>% 
+#   pheatmap(clustering_distance_cols = "euclidean", clustering_method = "complete", cluster_rows = TRUE,
+#     show_colnames = TRUE, show_rownames = TRUE,
+#     main = "Top DEGs Heatmap without LCN", 
+#     annotation_col = pDat[c("Sample_Number")], 
+#     annotation_colors = annot_cols)
+
+all_degs[c(1,3,5,7,9,11)]%>% 
+  pheatmap(clustering_distance_cols = "euclidean", clustering_method = "complete", cluster_rows = TRUE, color = heatmap_cols, breaks = breaks,
+    show_colnames = TRUE, show_rownames = TRUE,
+    annotation_col = pDat[c("Sample_Number")], annotation_colors = annot_cols,
+    main = "Top DEGs Heatmap: Sample 1")
+
+all_degs[c(2,4,6,8,10,12)]%>% 
+  pheatmap(clustering_distance_cols = "euclidean", clustering_method = "complete", cluster_rows = TRUE, color = heatmap_cols, breaks = breaks,
+    show_colnames = TRUE, show_rownames = TRUE,
+    annotation_col = pDat[c("Sample_Number")], annotation_colors = annot_cols,
+    main = "Top DEGs Heatmap: Sample 2")
+
+```  
+
+
+```{r z-score deg heatmap}
+
+#zscore <- function(x){
+#    z <- (x - mean(x)) / sd(x)
+#    return(z)
+#}
+
+z_degs <- eNorm_scale %>% 
+  filter(gene %in% all_deg_names) 
+
+z_degs <- z_degs %>% 
+  column_to_rownames(var = "gene")
+
+z_degs %>% 
+  pheatmap(clustering_distance_cols = "euclidean", clustering_method = "complete", cluster_rows = TRUE, color = heatmap_cols, breaks = breaks,
+    show_colnames = TRUE, show_rownames = TRUE,
+    main = "Top DEGs Heatmap", 
+    annotation_col = pDat[c("Sample_Number")], 
+    annotation_colors = annot_cols)
+
+
+```
+
+### 8.0 Tuft Cell Markers  
+
+```{r tuft cell markers}
+
+pDat <- pDat %>% 
+ rownames_to_column(var = "group")
+
+tuft <- c("DCLK1" , "INPP5D", "COX1")
+
+tuft <- eNorm %>% 
+  filter(gene %in% tuft)
+
+tuft
+#only INPP5D
+
+tuft <- as.data.frame(t(tuft))
+tuft <- tuft %>% 
+  rownames_to_column(var = "group")
+colnames(tuft) <- tuft[1,]
+tuft <- tuft[-1,]
+tuft <- tuft %>% 
+  inner_join(pDat, by = c("gene" = "group"))
+tuft$INPP5D <- as.numeric(tuft$INPP5D)
+tuft$INPP5D <- round(tuft$INPP5D, digits = 0)
+tuft$Condition <- as.factor(tuft$Condition)
+tuft$Condition <- fct_relevel(tuft$Condition, c("Day_10", "ALI_Day7", "US_RD1", "US_RD5", "flic_RD1", "flicRD5"))
+str(tuft)
+
+tuft %>% 
+  ggplot(aes(x = Condition, y = log2(INPP5D), fill = Sample_Number)) +
+  geom_bar(stat = "identity", position = position_dodge(), alpha = 0.8, width = 0.6) +
+  geom_text(aes(label = INPP5D), vjust = -0.8, colour = "#333333", position = position_dodge(0.65)) +
+  scale_fill_manual(values = sex_col) +
+  coord_cartesian(y = c(0, 10)) +
+  scale_y_continuous(expand = expansion(mult = c(0, .09))) +
+  labs(x = "Group", y = "log2RPM Expression", title = "INPP5D", subtitle = "Floating numbers indicate RPM\n") +
+  my_theme
+
+```  
+
+### 9.0 Top DMRs  
+
+```{r top dmrs, error=FALSE, warning=FALSE, message=FALSE}
+
+dname <- utils::read.csv(here::here("data", "Processed", "Steiner_DMR_Hits.csv"))
+as_tibble(head(dname))
+
+dmrs <- as.data.frame(dname$Gene)
+colnames(dmrs)[1] <- "gene"
+#converting blanks to NA
+dmrs[dmrs==""] <- NA
+dmrs <- na.omit(dmrs)
+as_tibble(head(dmrs))
+dmrs_list <- as.data.frame(str_split_fixed(dmrs$gene, ";", 2)) #need to separate each in to a differnet column but don't know how many genes have been recorder per row.
+
+#install.packages("splitstackshape")
+library(splitstackshape)
+dmrs_list <- cSplit(dmrs, "gene", sep=";") 
+as_tibble(head(dmrs_list)) #perfect
+
+dmrs_list <- dmrs_list %>% 
+  pivot_longer(cols = 1:11, names_to = "value", values_to = "gene")
+dmrs_list <- na.omit(dmrs_list)
+dmrs_list <- dmrs_list %>% 
+  distinct(gene)
+
+dmrs_list$gene[duplicated(dmrs_list$gene)] #perfect, all are unique
+
+dmrs_list <- as.character(dmrs_list$gene) #145
+
+dmrs_list <- eNorm %>% 
+  filter(gene %in% dmrs_list)
+nrow(dmrs_list) #123 = 22 not present
+
+dmrs_names <- dmrs_list$gene
+dmrs_list <- split(dmrs_list, seq(nrow(dmrs_list))) #make each row i.e. gene a separate element in a list
+names(dmrs_list) <- dmrs_names
+
+dmrs_list <- map(dmrs_list, function(x) x %>% deg_formatting())
+dmrs_plots <- list()
+
+for (i in seq_along(dmrs_list)) {
+  x <- ggplot(dmrs_list[[i]], (aes(x = Condition, y = log2(count), fill = Sample_Number))) +
+    geom_bar(stat = "identity", position = position_dodge(), alpha = 0.8, width = 0.6) +
+    geom_text(aes(label = count), vjust = -0.8, colour = "#333333", position = position_dodge(0.65)) +
+    scale_fill_manual(values = sex_col) +
+    coord_cartesian(y = c(0,10)) +
+    scale_y_continuous(expand = expansion(mult = c(0, .09)))+
+    labs(x = "Group", y = "log2RPM Expression", subtitle = "Floating numbers indicate normalized RPM\n") +
+    ggtitle(names(dmrs_list[i])) +
+    my_theme
+  dmrs_plots[[i]] <- x
+}
+
+names(dmrs_plots) <- dmrs_names
+
+#ggsave(
+#   filename = "DMR_genes.pdf", 
+#   plot = marrangeGrob(dmrs_plots, nrow=1, ncol=1)
+#)
+
+```
+
+
+```{r, eval=FALSE, include=FALSE, echo=FALSE}
+
+mDat <- eNorm %>% 
+  column_to_rownames(var = "gene") 
+
+mDat <- mDat %>% 
+  mutate (avg = rowMeans(mDat))
+
+library(matrixStats)
+
+mDat <- mDat %>% 
+  dplyr::select(-avg) %>%  
+  mutate (sd = rowSds(as.matrix(mDat)))
+
+mDat <- mDat %>% 
+  rownames_to_column(var = "gene") 
+
+mDat <- mDat %>%  
+  filter(gene %in% all_deg_names)
+
+```
+
+
+
+  
+
+
+
+
+
+
+
+

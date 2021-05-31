@@ -1,0 +1,256 @@
+---
+title: "Useful R Code"
+author: Nikita Telkar | Rob Lab
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    theme: journal
+    keep_md: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```  
+
+***  
+
+**General Help:**  
+
+https://notebooks.azure.com/kenandirek/libraries/r-intro
+
+https://www.personality-project.org/r/r.commands.html
+
+https://www.datacamp.com/community/tutorials/r-data-import-tutorial#txt
+  
+  
+***
+**Data Types:** https://swcarpentry.github.io/r-novice-inflammation/13-supp-data-structures/
+
+*** 
+
+#### **Installing Packages**
+If `install.packages()` doesn't work:
+
+
+```
+library(devtools)
+install_github("gagolews/stringi")
+
+OR
+
+install.packages("stringi", dependencies=TRUE, INSTALL_opts = c('--no-lock'))
+
+```
+
+*** 
+
+#### **Colour Change + other formatting options**
+``` 
+<span style="color:green"> Hello World! </span>  
+Or  
+<span style="color:#A763FF"> Hello World! </span>
+Or
+<span style='font-weight:bold;font-family:"Palatino Linotype";'><span style='color:#689107;'>Hello World!</span></span>
+```
+
+***
+#### **Convert df to tibble**
+```
+library(tibble)
+as_tibble()
+```
+
+***
+#### **Convert df to dropdown table**  
+```
+library(DT)
+datatable()
+```
+***
+
+#### **Transpose Data: Interchange rows and columns**  
+```
+dataframe <- t(dataframe)  #Imp: Changes data type
+```
+***
+
+
+#### **Printing**
+```
+print(dataframe[2:28, 1], n = 27)
+```  
+  Or  
+```
+#alt way to print --> convert into separate variable and print
+dataframe_2 <- dataframe[2:28, 1]       
+print(as_tibble(dataframe_2), n = 27)
+```  
+Or  
+```
+paged_table() #best table display when datatable() is too heavy to be processed
+```
+
+
+***
+
+#### **Return unique elements**  
+```
+unique(dataframe[,1]) #data type is character  
+                      #include [] inside of ()
+```
+***
+
+#### **Deleting/Selecting columns/rows**  
+```
+dataframe_2 <- dataframe[c(1:4)]   #select first 4 columns
+dataframe_2 <- head(dataframe, 10)   #select first 10 rows
+dataframe_2 <- tail(dataframe, -10)   #delete first 10 rows
+dataframe_2 <- head(dataframe, -10)   #delete last 10 rows
+
+dataframe_2 <- dataframe[!dataframe$tissue="brain",] #delete samples containing the word "brain" in column "tissue"
+
+```
+***
+
+#### **Finding Values from one in another**  
+
+```
+dataframe$caseID[dataframe$caseID %in% dataframe_2$Case_ID]
+``` 
+
+Negation:
+```
+dataframe$caseID[!dataframe$caseID %in% dataframe_2$Case_ID]
+
+```
+***
+
+#### **Renaming**  
+
+Row based on column names:  
+```
+colnames(GLGC_S9) = GLGC_S9[1, ]  
+
+names(dataframe)[3]<-"new_name"
+names(dataframe) <- c("new_name", "another_new_name")  
+
+```
+
+When the above doesn't work for whatever reason, save the names as a character value, and then apply:  
+
+```
+names_df <- colnames(dataframe)
+row.names (dataframe_2) <- names_df
+```  
+
+***
+
+#### **Merging**  
+
+```
+dataframe$chromosome <- paste(dataframe$chr, dataframe$position, sep="_")  #make new column containing chromosome and position info, separated by "_" e.g. chr4_1908876
+```  
+
+***
+
+#### **Reordering / Rearranging**  
+
+```
+dataframe <- arrange(pvalue, logFC) #arrange according to ascending order by column pvalue and then by column logFC  
+
+dataframe <- arrange(desc(pvalue,)) #arrange in descending order  
+
+dataframe <- dataframe[, c(5, 4, 1, 2, 3)]  #reorder columns
+
+dataframe <- select(c("sample", tissue", "pvalue")) #keep only these 3 columns  
+```
+http://www.sthda.com/english/wiki/reordering-data-frame-columns-in-r  
+https://jules32.github.io/2016-07-12-Oxford/dplyr_tidyr/   
+
+
+***
+
+#### **Knitr options** 
+
+https://yihui.org/knitr/options/
+
+***
+
+
+
+***
+
+#### **Selecting by column number vs name** 
+
+```
+s1_zero <- s1_zero %>% 
+  filter(.[1] > 0)
+```
+
+***  
+
+#### **Recoding values for entire df**
+
+```
+
+eDat_cat <- eDat %>% 
+  mutate_all(funs(
+    case_when(
+    . == 0 ~ "0",  
+    . == 1 ~ "1",
+    between(., 1, 10)  ~ "2",
+    between(., 10, 100)  ~ "3",
+    . > 100  ~ "4"))
+  )
+
+```  
+***  
+
+<<<<<<< HEAD
+***  
+
+#### **Replacing NA's or 0**
+
+```
+
+eDat <- eDat %>% 
+  replace(is.na(.), 0)
+  
+eDat <- eDat %>%
+  replace(.==0, NA)
+=======
+#### **Replace NA with 0 or 0 with NA**
+
+```
+
+pDat %>% 
+  replace(is.na(.), 0)
+  
+mtcars %>% 
+  replace(.==0, NA)
+  
+starwars %>%
+  select(name, eye_color) %>%
+  mutate(eye_color = na_if(eye_color, "unknown"))
+>>>>>>> 986eb4a07273a33a98c1b8990752b3b560088c91
+
+```  
+***  
+
+<<<<<<< HEAD
+
+#### **Indexing ggplot by column number**
+
+```
+mir_11361_5p %>% 
+  ggplot(aes_string(colnames(test)[2], colnames(test)[3]))
+
+```  
+***  
+
+
+
+=======
+>>>>>>> 986eb4a07273a33a98c1b8990752b3b560088c91

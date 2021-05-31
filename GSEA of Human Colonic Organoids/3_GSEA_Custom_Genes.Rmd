@@ -1,0 +1,857 @@
+---
+title: "GSEA_Cutsom_Genes" 
+author: Nikita Telkar 
+date: "April 12, 2021"
+output: 
+  html_document: 
+    keep_md: yes 
+    toc: true 
+    toc_depth: 4
+    toc_float: 
+      collapsed: false 
+      smooth_scroll: false 
+    theme: paper  #cosmo, paper, lumen, sandstone, simplex, yeti; cerulean, journal, flatly, darkly, readable, spacelab, united
+    highlight: espresso #tango, pygments, kate, monochrome, espresso, zenburn, haddock, textmate.
+---
+
+## 0.0 Introduction
+
+Here I'll be running GSEA on a list of custom genes.
+
+------------------------------------------------------------------------
+
+## 1.0 Loading Packages and Data
+
+```{r libraries, message=FALSE, error=FALSE}
+
+#tidyverse packages
+#library(dplyr)
+#library(stringr)
+#library(readr)
+#library(tidyr)
+#library(tibble)
+#library(forcats)
+#library(purrr)
+#library(ggplot2)
+
+library(here) 
+library(readxl)
+library(openxlsx)
+library(readr)
+library(rmarkdown)
+library(knitr)
+library(stringr)
+library(DT)
+library(kableExtra)
+library(formatR)
+library(janitor)
+library(scales)
+library(ggpubr)
+library(gridExtra)
+library(RColorBrewer)
+library(reshape2)
+library(showtext)
+library(extrafont)
+library(biomaRt)
+library(pheatmap)
+library(tidyverse)
+
+#GSEA packages
+library(fgsea)
+library(msigdbr)
+
+```
+
+```{r knitr opts}
+
+knitr::opts_chunk$set(fig.showtext = TRUE, fig_retina = 1) #needed to render show_text
+knitr::opts_chunk$set(warning = FALSE, error = FALSE, message = FALSE)
+
+#font_add_google("Montserrat", "Mont")
+
+font_paths("C:/Users/nikita.telkar/AppData/Local/Microsoft/Windows/Fonts")
+font_add("Montserrat", regular = "Montserrat-Regular.ttf")
+
+showtext_auto()
+
+my_theme <- theme_minimal() +
+  theme(plot.title = element_text(family = "Montserrat", size = 14),
+        plot.subtitle = element_text(family = "Montserrat", size = 12),
+        legend.text = element_text(family = "Montserrat", size = 10),
+        axis.title = element_text(family = "Montserrat", size = 14))
+```
+
+```{r loading data}
+
+#ranked logFC with entrez list for all comparison
+all_gl <- readRDS(here::here("data", "Processed", "all_ranked_genelists.RDS"))
+
+gl_d10_alid7 <- readRDS(here::here("data", "Processed", "genelists", "gl_d10_alid7.RDS"))
+gl_d10_flicRD1 <- readRDS(here::here("data", "Processed", "genelists", "gl_d10_flicRD1.RDS"))
+gl_d10_flicRD5 <- readRDS(here::here("data", "Processed", "genelists", "gl_d10_flicRD5.RDS"))
+gl_d10_RD1 <- readRDS(here::here("data", "Processed", "genelists", "gl_d10_RD1.RDS"))
+gl_d10_RD5 <- readRDS(here::here("data", "Processed", "genelists", "gl_d10_RD5.RDS"))
+gl_RD1_flicRD1 <- readRDS(here::here("data", "Processed", "genelists", "gl_RD1_flicRD1.RDS"))
+gl_RD5_flicRD5 <- readRDS(here::here("data", "Processed", "genelists", "gl_RD5_flicRD5.RDS"))
+gl_RD5_RD1 <- readRDS(here::here("data", "Processed", "genelists", "gl_RD5_RD1.RDS"))
+gl_flicRD5_flicRD1 <- readRDS(here::here("data", "Processed", "genelists", "gl_flicRD5_flicRD1.RDS"))
+
+#all DE analysis metrics + parameters from earlier scripts in ibd project
+all_metrics <- readRDS(here::here("data", "Processed", "all_gene_metrics.RDS"))
+
+eNorm <- read.xlsx(here::here("data", "Processed", "ibd_eDat_norm.xlsx"), colNames = TRUE, rowNames = TRUE)
+
+pDat <- read.xlsx(here::here("data", "Processed", "ibd_pDat.xlsx"), colNames = TRUE, rowNames = TRUE)
+
+#z-scores
+eNorm_scale <- read.xlsx(here::here("data", "Processed", "ibd_eNorm_z-scores.xlsx"), colNames = TRUE, rowNames = TRUE)
+
+```  
+
+## 2.0 Stappenbeck Markers  
+
+[This Wang Y et al., paper](https://www.sciencedirect.com/science/article/pii/S0092867419311651) is the mouse study that this current project is based on. Referencing their **Figure 2D**, I'm going to pull those markers from our data and check how well the expression aligns with theirs.
+
+### 2.1 Converting mouse genes to their human homologues  
+
+Now, the genes which we want to look at are mouse genes. We need to first convert them to their human equivalents. 
+
+```{r mouse to human, cache=TRUE}
+
+#stappenbeck markers
+stappenbeck_genes <- read_excel(here::here("data", "Processed", "Stappenbeck_Fig2D_markers.xlsx"), col_names = TRUE)
+stappenbeck_genes
+dim(stappenbeck_genes) #22 genes
+
+mm_genes <- stappenbeck_genes$mouse_genes
+
+# Basic function to convert mouse to human gene names
+convertMouseGeneList <- function(x){
+require("biomaRt")
+human = useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+mouse = useMart("ensembl", dataset = "mmusculus_gene_ensembl")
+ 
+genesV2 = getLDS(attributes = c("mgi_symbol"), filters = "mgi_symbol", values = x , mart = mouse, attributesL = c("hgnc_symbol"), martL = human, uniqueRows=T)
+humanx <- unique(genesV2[, 2])
+ 
+return(humanx)
+}
+
+mm_genes <- convertMouseGeneList(mm_genes)
+mm_genes <- as.data.frame(mm_genes)
+dim (mm_genes)
+
+```  
+
+Hmm, not all genes are returned (18 /22). Let's try converting all mouse genes to upper case and joining to see which genes aren't matching.
+
+```{r mouse to human 2}
+
+stappenbeck_genes <- stappenbeck_genes %>% 
+  mutate(upper = toupper(mouse_genes))
+
+which(stappenbeck_genes$upper %in% mm_genes$mm_genes)
+
+not_in_human <- stappenbeck_genes %>% 
+  anti_join(mm_genes, by = c("upper" = "mm_genes"))
+
+not_in_human
+```
+
+By manually checking, all 5 genes not matching between biomaRt for *whatever reason* are present in  [Genecards](genecards.org). It's only Car4 which is present as CA4 in humans. 
+
+I'm also going to find a mouse-to-human homologue file to get the human gene ids of the respective mouse one, just in case. The [HOM_MouseHumanSequence.rpt file](on the MGI Mouse Genome Informatics website) is the one - let's take a look at that text file.  
+
+```{r MGI table}
+
+mouse_to_human <- read.delim(here::here("data", "Processed", "HOM_MouseHumanSequence.rpt.txt"), sep = "\t", header = TRUE)
+
+head(mouse_to_human)
+
+```  
+
+I'll separate the mouse and human rows, and then match them by homologue so that we have all the data is a workable format. I'll then join that dataframe to the `stappenbeck file`, and add the entrez IDs. 
+
+```{r join human and mouse, cache=TRUE}
+
+# mouse <- mouse_to_human %>% 
+#   filter(Common.Organism.Name == "mouse, laboratory") %>% 
+#   dplyr::select(HomoloGene.ID, Symbol)
+# 
+# human <- mouse_to_human %>% 
+#   filter(Common.Organism.Name == "human") %>% 
+#   dplyr::select(HomoloGene.ID, Symbol)
+# 
+# mm_to_HGNC <- mouse %>% 
+#   full_join(human, by = "HomoloGene.ID")
+# 
+# colnames(mm_to_HGNC) <- c("Homologue_number", "mouse", "human")
+#write.xlsx(mm_to_HGNC, file = here::here("data", "Processed", "mouse_human_homologues.xlsx"), colnames = TRUE)
+
+mm_to_HGNC <- read.xlsx(here::here("data", "Processed", "mouse_human_homologues.xlsx"), colNames = TRUE, rowNames = FALSE)
+
+stappenbeck_genes <- stappenbeck_genes %>% 
+  left_join(mm_to_HGNC, by = c("mouse_genes" = "mouse"))
+
+custom_genes <- stappenbeck_genes %>% 
+  dplyr::select(human)
+
+custom_genes
+
+#making a dataframe of ALL Entrez to HGNC via MSigDb
+# HGNC_to_Entrez <- msigdbr(species = "Homo sapiens")
+# 
+# HGNC_to_Entrez <- HGNC_to_Entrez %>% 
+#   dplyr::select(human_gene_symbol, human_entrez_gene) %>% 
+#   distinct(human_gene_symbol, .keep_all = TRUE)
+#write.xlsx(HGNC_to_Entrez, file = here::here("data", "Processed", "HGNC_to_Entrez.xlsx"), colnames = TRUE)
+
+HGNC_to_Entrez <- read.xlsx(here::here("data", "Processed", "HGNC_to_Entrez.xlsx"), colNames = TRUE, rowNames = FALSE)
+
+custom_genes <- custom_genes %>% 
+  inner_join(HGNC_to_Entrez, by = c("human" = "human_gene_symbol")) %>% 
+  dplyr::select(human_entrez_gene)
+
+```
+
+We now have the mouse to human equivalent genes.  
+
+### 2.2 GSEA  
+
+Let's now make our custom genes list/set into a `fgsea` useable object and compute the GSEA.    
+
+```{r stappenbeck gsea}
+
+custom_genes$term <- "STAPPENBECK_MARKERS"
+
+colnames (custom_genes) [1] <- "gene"
+
+custom_genes <- custom_genes[c(2,1)]
+
+
+
+custom_genes <- split(x = custom_genes$gene, f = custom_genes$term)
+
+fgsea_custom <- list()
+
+for (i in 1:length(all_gl)){
+fgsea_custom[[i]] <- fgsea(custom_genes, all_gl[[i]])
+}
+
+#using map instead of for loop
+test <- list()
+test <- map(all_gl, function(x) fgsea(custom_genes, x) )
+
+names(fgsea_custom) <- names(all_gl)
+dfnames <- names(all_gl)
+ 
+fgsea_custom <- do.call(rbind, fgsea_custom)
+fgsea_custom <- as.data.frame(fgsea_custom)
+#write.xlsx(fgsea_custom, file = here::here("data", "Processed", "ibd_fgsea_stappenbeck_FIG2D_results.xlsx"), colnames = TRUE)
+  
+row.names(fgsea_custom) <- dfnames
+
+fgsea_custom <- fgsea_custom %>% 
+  rownames_to_column(var = "comparison")
+
+fgsea_custom %>% 
+  ggplot(aes(x = reorder(comparison, NES), y = NES)) +
+  geom_col(aes(fill = padj < 0.05)) +
+  scale_fill_manual(values = c("#ffad33", "#47d147")) +
+  coord_flip() +
+  labs(x = "Comparison", y = "Normalized Enrichment Score", title = "Geneset Enrichment of Stappenbeck markers for all Comparisons") + 
+  theme_minimal()
+
+custom_enrichplots <- list
+
+custom_enrichplots <- list(
+plotEnrichment(custom_genes[[1]], gl_d10_alid7),
+plotEnrichment(custom_genes[[1]], gl_d10_flicRD1),
+plotEnrichment(custom_genes[[1]], gl_d10_flicRD5),
+plotEnrichment(custom_genes[[1]], gl_d10_RD1),
+plotEnrichment(custom_genes[[1]], gl_d10_RD5),
+plotEnrichment(custom_genes[[1]], gl_flicRD5_flicRD1),
+plotEnrichment(custom_genes[[1]], gl_RD1_flicRD1),
+plotEnrichment(custom_genes[[1]], gl_RD5_flicRD5),
+plotEnrichment(custom_genes[[1]], gl_RD5_RD1)
+)
+
+
+# for (i in 1:length(all_gl)) {
+# custom_enrichplots[[i]] <- plotEnrichment(custom_genes$STAPPENBECK_MARKERS, all_gl[[i]])
+# }
+
+names(custom_enrichplots) <- names(all_gl)
+custom_enrichplots 
+#ggsave(here::here("info_results", "gsea_plots", "STAPPENBECK_CUSTOM_MARKERS.png"), arrangeGrob(grobs = custom_enrichplots))
+
+```  
+
+Let's also look at the z-score heatmap of the log2normalized gene counts for the `custom_genes` list.  
+
+```{r stappenbeck z-scores}
+
+eNorm_scale <- eNorm_scale %>% 
+  rownames_to_column(var = "gene")
+
+custom_zscore <- eNorm_scale %>% 
+  filter(gene %in% stappenbeck_genes$human) 
+
+custom_zscore <- custom_zscore %>% 
+  rownames_to_column(var = "ID") %>% 
+  column_to_rownames(var = "gene") %>% 
+  dplyr::select(-ID)
+
+nrow(custom_zscore)
+#Hmm, only 11 of the 23 genes overlap
+
+heatmap_cols = colorRampPalette(c("blue", "white", "red"))(99)
+annot_cols <- list(Sample_Number = c(`1` = "#eeccff", `2` = "#99ceff"))
+
+#finding out the max value of our eNorm_scale
+eNorm_scale <- eNorm_scale %>% 
+  column_to_rownames(var = "gene")
+range <- max(abs(eNorm_scale))
+#setting colour white in our heatmaps to 0
+breaks <- seq(-range, range, length.out = 100)
+
+custom_zscore %>%
+  pheatmap(clustering_distance_cols = "euclidean", clustering_method = "complete", cluster_rows = FALSE, cluster_cols = FALSE, color = heatmap_cols, breaks = breaks,
+    show_colnames = TRUE, show_rownames = TRUE,
+    main = "Custom Markers Heatmap", 
+    annotation_col = pDat[c("Sample_Number")],  annotation_colors = annot_cols)
+
+custom_zscore [c(1,3,5,7,9,11)] %>% 
+  pheatmap(clustering_distance_cols = "euclidean", clustering_method = "complete", cluster_rows = FALSE, cluster_cols = FALSE, color = heatmap_cols, breaks = breaks,
+    show_colnames = TRUE, show_rownames = TRUE,
+    main = "Custom Markers Heatmap - Sample 1", 
+    annotation_col = pDat[c("Sample_Number")],  annotation_colors = annot_cols)
+
+custom_zscore[c(2,4,6,8,10,12)] %>% 
+  pheatmap(clustering_distance_cols = "euclidean", clustering_method = "complete", cluster_rows = FALSE, cluster_cols = FALSE, color = heatmap_cols, breaks = breaks,
+    show_colnames = TRUE, show_rownames = TRUE,
+    main = "Custom Markers Heatmap - Sample 2", 
+    annotation_col = pDat[c("Sample_Number")],  annotation_colors = annot_cols)
+
+```  
+
+It looks like only 11 of the 23 markers from the paper overlap with our dataset.  
+
+### 2.3 EDIT: Stappenbeck GSEA via Software  
+
+I'm conducting further GSEA using the markers found in the Supplementary Tables 1-4 of the paper. I've already formatted the files in excel to only keep the gene marker names.
+
+```{r stappenbeck supp tables mouse to human}
+
+goblet <- read_excel(here::here("GSEA_software_files", "Stappenbeck_files", "Stappenbeck_markers", "Table_S1_Goblet_Cell.xlsx"), col_names = TRUE)
+entero <- read_excel(here::here("GSEA_software_files", "Stappenbeck_files", "Stappenbeck_markers", "Table_S2_Enteroendocrine_Cell.xlsx"), col_names = TRUE)
+DSS <- read_excel(here::here("GSEA_software_files", "Stappenbeck_files", "Stappenbeck_markers", "Table_S3_DSS-Associated_Regenerative.xlsx"), col_names = TRUE)
+fetal <- read_excel(here::here("GSEA_software_files", "Stappenbeck_files", "Stappenbeck_markers", "Table_S4_Fetal_Epithelial.xlsx"), col_names = TRUE)
+
+stappenbeck_stables_markers <- list(goblet, entero, DSS, fetal)
+names(stappenbeck_stables_markers) <- c("goblet", "entero", "DSS", "fetal")
+
+stappenbeck_stables_markers <- map(stappenbeck_stables_markers, ~ .x %>%
+                                     left_join(mm_to_HGNC, by = c("PROBE" = "mouse")))
+
+not_in_stap <- map(stappenbeck_stables_markers, ~ .x %>% 
+                     filter(is.na(human)))
+
+head(not_in_stap)
+
+
+```
+
+Okay, looking at a few of the mouse genes, they don't seem to have a human homologue. I'm just going to take those ones out.  
+
+```{r saving stappenbeck supp table markers}
+
+stappenbeck_stables_markers <- map(stappenbeck_stables_markers, ~ .x %>%
+                                     na.omit(x))
+
+stappenbeck_stables_markers <- map(stappenbeck_stables_markers, ~ .x %>%
+                                     dplyr::select(human))
+
+#write.xlsx(stappenbeck_stables_markers, file = here::here("GSEA_software_files", "Stappenbeck_files", "Stappenbeck_markers", "stappenbeck_markers_tables_s1_s4.xlsx"), col.names = FALSE)
+
+```
+
+**EDIT:** I'm going to load the detailed GSEA results tables output from the GSEA software to make the NES plots.  
+
+```{r stappenbeck supp tables markers}
+
+#when using this function, check which your working directory is and your Knitr directory.
+Stappenbeck_GSEA_results <- list.files(pattern = "_GSEA_results.xlsx$", recursive = TRUE, full.names = TRUE) %>%
+  set_names(nm = (basename(.) %>% 
+                    tools::file_path_sans_ext())) %>%
+  map(read_excel)
+
+names(Stappenbeck_GSEA_results) <- names(all_gl)
+#write.xlsx(Stappenbeck_GSEA_results, file = here::here("data", "Processed", "ibd_fgsea_stappenbeck_TableS1-S4_results.xlsx"), colnames = TRUE)
+
+#renaming to padj cause original is named FDR q val
+Stappenbeck_GSEA_results <- lapply(Stappenbeck_GSEA_results, function (x) {colnames(x)[6] <- "padj"; x}) 
+
+stappenbeck_NES_plots <- list()
+
+for (i in seq_along(Stappenbeck_GSEA_results)){
+  x <- ggplot(Stappenbeck_GSEA_results[[i]], aes(x = reorder(NAME, NES), y = NES)) +
+    geom_col(aes(fill = padj < 0.05, width = 0.6)) +
+    scale_fill_manual(values = c("#ffad33", "#47d147")) +
+    coord_flip() +
+    labs(x = "Gene Set", y = "Normalized Enrichment Score") +
+    ggtitle(names(Stappenbeck_GSEA_results[i])) +
+    my_theme
+  stappenbeck_NES_plots[[i]] <- x
+}
+
+names(stappenbeck_NES_plots) <- names(all_gl)
+
+stappenbeck_NES_plots
+
+#Rearranging to include readings for each geneset in one list, rather than dividing by genelist
+sb_goblet <- map(Stappenbeck_GSEA_results, function(x) x %>% 
+                   filter(NAME == "GOBLET_CELL_SIGNATURE"))
+sb_goblet <- do.call(rbind, sb_goblet)
+
+sb_EE <- map(Stappenbeck_GSEA_results, function(x) x %>% 
+                   filter(NAME == "ENTEROENDOCRINE_CELL_SIGNATURE"))
+sb_EE <- do.call(rbind, sb_EE)
+
+sb_DSS <- map(Stappenbeck_GSEA_results, function(x) x %>% 
+                   filter(NAME == "DSS-ASSOCIATED_REGENERATIVE_EPITHELIAL"))
+sb_DSS <- do.call(rbind, sb_DSS)
+
+sb_fetal <- map(Stappenbeck_GSEA_results, function(x) x %>% 
+                   filter(NAME == "FETAL_EPITHELIAL_SIGNATURE"))
+sb_fetal <- do.call(rbind, sb_fetal)
+
+sb_list <- list(sb_goblet, sb_EE, sb_DSS, sb_fetal)
+names(sb_list) <- c("sb_goblet", "sb_EE", "sb_DSS", "sb_fetal")
+
+sb_list <- map(sb_list, function(x) x %>% 
+                 rownames_to_column(var = "comparison"))
+
+stappenbeck_NES_plots_2 <- list()
+
+for (i in seq_along(sb_list)){
+  x <- ggplot(sb_list[[i]], aes(x = reorder(comparison, NES), y = NES)) +
+    geom_col(aes(fill = padj < 0.05)) +
+    scale_fill_manual(values = c("#ffad33", "#47d147")) +
+    coord_flip() +
+    labs(x = "Condition", y = "Normalized Enrichment Score") +
+    ggtitle(names(sb_list[i])) +
+    my_theme
+  stappenbeck_NES_plots_2[[i]] <- x
+}
+
+names(stappenbeck_NES_plots_2) <- names(sb_list)
+
+stappenbeck_NES_plots_2
+
+```
+
+
+***  
+
+## 3.0 Smillie et. al., Markers  
+
+Let's now take a look at the markers from [this paper by Smillie, C et al.,](https://www.sciencedirect.com/science/article/pii/S0092867419307329?via%3Dihub).  
+
+I already appended the Excel file to put each gene into a separate cell. I'll now make it into a df so that all genes are in one column.  
+
+```{r similie genes}
+
+#Smillie markers
+smillie <- read_excel(here::here("data", "Processed", "Smillie_genes.xlsx"), col_names = TRUE)
+
+smillie
+
+smillie <- smillie %>% 
+  pivot_longer(names_to = "x", values_to = "gene", cols = 2:15)
+
+smillie
+
+smillie <- smillie [-c(3)]
+
+smillie <- na.omit(smillie)
+
+dim(smillie)
+
+```  
+
+Adding matching entrez genes:
+
+```{r smillie entrez}
+
+colnames(smillie) [1] <- "cell_type"
+
+#adding entrez 
+smillie <- smillie %>% 
+  left_join(HGNC_to_Entrez, by = c("gene" = "human_gene_symbol"))
+
+smillie_na <- smillie %>% 
+  filter(is.na(human_entrez_gene))
+
+smillie_na
+```  
+
+There's a few NAs. [Genecards](https://www.genecards.org) shows that these genes actually do exist, but that they're known by their more popular names. I'm going to manually add the names of these genes.  
+
+```{r smillie manually add gene names}
+
+gene_name_aliases <- as.data.frame(smillie_na$gene)
+
+gene_name_aliases$alternative_name <- c("H2AC6", "PLPP1", "INAVA", "CARNMT1", "PLPP1", "ERBIN")
+
+gene_name_aliases
+
+
+#joining to smillie_na
+smillie_na <- smillie_na %>% 
+  right_join(gene_name_aliases, by = c("gene" = "smillie_na$gene"))
+
+smillie_na
+
+#removing duplicaate rows
+smillie_na <- smillie_na %>% 
+  distinct()
+
+#removing original gene names
+smillie_na <- smillie_na %>% 
+  select(cell_type, Condition, alternative_name)
+
+colnames(smillie_na)[3] <- "gene"
+
+#adding entrez genes
+smillie_na <- smillie_na %>% 
+  left_join(HGNC_to_Entrez, by = c("gene" = "human_gene_symbol"))
+
+smillie_na
+
+smillie_na <- smillie_na %>% 
+  distinct()
+
+smillie_na
+
+```  
+
+I'll now delete the rows that contain the NAs in `smillie` and bind the `smillie_na` df which does contain the original gene names and the respective entrez IDs.  
+
+
+```{r join smillie with smillie na}
+
+nrow(smillie) #292
+
+nrow(smillie_na) #6
+
+292 - 6
+
+smillie <- na.omit(smillie)
+
+nrow(smillie) #286 = deleted 6 entries 
+
+smillie <- rbind(smillie, smillie_na)
+
+which(is.na(smillie)) #perfect, done
+
+#renaming entrez column to gene 
+
+colnames(smillie) [3:4] <- c("gene_symbol", "gene")
+
+```
+
+I'll now separate the dataframe by the cell-type and by condition, so 2 dfs per cell type: ulcerative colities and control
+
+```{r smillie cell type and condition}
+
+smillie %>% 
+  count(cell_type, Condition)
+
+epithelial_control <- smillie %>% 
+  dplyr::filter (cell_type == "E_epithelial" & Condition == "Control") %>% 
+  mutate(term = "SMILLIE_EPITHELIAL_Control") %>% 
+  dplyr::select(term, gene)
+dim(epithelial_control) #95
+
+epithelial_uc <- smillie %>% 
+  dplyr::filter (cell_type == "E_epithelial" & Condition == "UC") %>% 
+  mutate(term = "SMILLIE_EPITHELIAL_UC") %>% 
+  dplyr::select(term, gene)
+dim(epithelial_uc) #129
+
+goblet_control <- smillie %>% 
+  dplyr::filter (cell_type == "immature_goblet" & Condition == "Control")  %>% 
+  mutate(term = "SMILLIE_IMMATURE_GOBLET_Control") %>% 
+  dplyr::select(term, gene)
+dim(goblet_control) #34
+
+goblet_uc <- smillie %>% 
+  dplyr::filter (cell_type == "immature_goblet" & Condition == "UC") %>% 
+  mutate(term = "SMILLIE_IMMATURE_GOBLET_UC") %>% 
+  dplyr::select(term, gene)
+dim(goblet_uc) #34
+
+smillie_markers <- as.data.frame(rbind(epithelial_uc, epithelial_control, goblet_uc, goblet_control))
+smillie_markers <- split(x = smillie_markers$gene, f = smillie_markers$term)
+
+fgsea_smillie <- list()
+
+for (i in 1:length(all_gl)){
+fgsea_smillie[[i]] <- fgsea(smillie_markers, all_gl[[i]])
+}
+
+names(fgsea_smillie) <- names(all_gl)
+#write.xlsx(fgsea_smillie, file = here::here("data", "Processed", "ibd_fgsea_smillie_results.xlsx"), colnames = TRUE)
+
+smillie_NES_plots <- list()
+
+for (i in seq_along(fgsea_smillie)){
+  x <- ggplot(fgsea_smillie[[i]], aes(x = reorder(pathway, NES), y = NES)) +
+    geom_col(aes(fill = padj < 0.05, width = 0.6)) +
+    scale_fill_manual(values = c("#ffad33", "#47d147")) +
+    coord_flip() +
+    labs(x = "Pathway", y = "Normalized Enrichment Score") +
+    ggtitle(names(fgsea_smillie[i])) +
+    my_theme
+  smillie_NES_plots[[i]] <- x
+}
+
+names(smillie_NES_plots) <- names(all_gl)
+
+smillie_NES_plots
+
+``` 
+
+I'm actually going totry to run this GSEA via the software. Using `d10_alid7` as an example, I'll prepare the `.rnk` file required by the software, consisting of the gene identifier in the first column and the ranking metric in the second(the log2FC). I'll manually add the `.rnk` extension to saved excel file.
+
+The geneset file requires each row (`.gmt`) or each column (`.gmx`) to be one geneset, with the name of the geneset in the first column/header, and the gene identifiers in subsequent columns after that. I'll manually add the extension to saved excel file.  
+
+The [guide to making the files](https://software.broadinstitute.org/cancer/software/gsea/wiki/index.php/Data_formats#RNK:_Ranked_list_file_format_.28.2A.rnk.29) details the formatting required to run the [preranked GSEA](https://www.gsea-msigdb.org/gsea/doc/GSEAUserGuideFrame.html?_GSEAPreranked_Page)
+
+```{r GSEA software formatting}
+
+ali_d7_rnk <- all_metrics[[1]]
+
+head(ali_d7_rnk)
+
+ali_d7_rnk <- ali_d7_rnk %>% 
+  select(GeneName, log2FoldChange)
+  
+#write.xlsx(ali_d7_rnk, file = here::here("data", "Processed", "d10_alid7_rnk.xlsx"), colnames = TRUE)
+
+smillie_gmt <- smillie %>% 
+  unite("term", cell_type:Condition)
+
+smillie_gmt
+
+smillie_gmt <- smillie_gmt %>% 
+  select(term, gene_symbol)
+
+smillie_gmt <- split(x = smillie_gmt$gene_symbol, f = smillie_gmt$term)
+
+#write.xlsx(smillie_gmt, file = here::here("data", "Processed", "smillie_gmt.xlsx"), colnames = TRUE)
+
+```  
+
+Okay, so the enrichment results table outputs a similar NES as is in our `fgsea_smillie` object, with a minor decimal number difference (i.e. 0.71 instead of 0.72.). Let's compare:
+
+```{r comparing fgsea and software output}
+
+as_tibble(fgsea_smillie[[1]])
+
+enrich_results_alid7_smillie <- read.delim(here::here("data", "Processed", "gsea_report_alid7_smillie.tsv"), sep = "\t", header = TRUE)
+
+as_tibble(enrich_results_alid7_smillie)
+
+```  
+
+I'll make all `.rnk` files for all the conditions that we have.  
+
+```{r all rnk files}
+
+all_rnk_files <- map(all_metrics, function (x) x %>% 
+  select(GeneName, log2FoldChange))
+
+#write.xlsx(all_rnk_files, file = here::here("data", "Processed", "all_rnk_files.xlsx"), colnames = FALSE)
+
+``` 
+
+I'm going to do the smillie gene markers GSEA with the software itself, stored in Projects/ibd_steiner/GSEA_software_files.  
+
+## 4.0 GSEA Software files  
+
+This is how the GSEA files look like: 
+
+1. Our ranked log2FC `.rnk` files:
+
+```{r rnk file}
+knitr::include_graphics(here::here("images", "rnk_file.png"), error = FALSE)
+```
+
+2. Our genesets `.gmx` files:
+
+```{r gmx file}
+knitr::include_graphics(here::here("images", "gmx_file.png"), error = FALSE)
+```
+
+3. GSEAPreranked parameters to choose in the GSEA Software:
+
+```{r prerank file}
+knitr::include_graphics(here::here("images", "GSEA_pre_ranked_parameters.png"), error = FALSE)
+```
+
+
+
+
+
+
+```{r all enrichplots, eval=FALSE, include=FALSE, echo=FALSE}
+
+d10_alid7_enrichplots <- list()
+for (i in 1:length(smillie_markers)) {
+d10_alid7_enrichplots[[i]] <- plotEnrichment(smillie_markers[[i]], gl_d10_alid7)
+}
+names(d10_alid7_enrichplots) <- names(smillie_markers)
+
+d10_flicRD1_enrichplots <- list()
+for (i in 1:length(smillie_markers)) {
+d10_flicRD1_enrichplots[[i]] <- plotEnrichment(smillie_markers[[i]], gl_d10_flicRD1)
+}
+names(d10_flicRD1_enrichplots) <- names(smillie_markers)
+
+d10_RD1_enrichplots <- list()
+for (i in 1:length(smillie_markers)) {
+d10_RD1_enrichplots[[i]] <- plotEnrichment(smillie_markers[[i]], gl_d10_RD1)
+}
+names(d10_RD1_enrichplots) <- names(smillie_markers)
+
+d10_RD5_enrichplots <- list()
+for (i in 1:length(smillie_markers)) {
+d10_RD5_enrichplots[[i]] <- plotEnrichment(smillie_markers[[i]], gl_d10_RD5)
+}
+names(d10_RD5_enrichplots) <- names(smillie_markers)
+
+flicRD5_flicRD1_enrichplots <- list()
+for (i in 1:length(smillie_markers)) {
+flicRD5_flicRD1_enrichplots[[i]] <- plotEnrichment(smillie_markers[[i]], gl_flicRD5_flicRD1)
+}
+names(flicRD5_flicRD1_enrichplots) <- names(smillie_markers)
+
+RD1_flicRD1_enrichplots <- list()
+for (i in 1:length(smillie_markers)) {
+RD1_flicRD1_enrichplots[[i]] <- plotEnrichment(smillie_markers[[i]], gl_RD1_flicRD1)
+}
+names(RD1_flicRD1_enrichplots) <- names(smillie_markers)
+
+RD5_flicRD5_enrichplots <- list()
+for (i in 1:length(smillie_markers)) {
+RD5_flicRD5_enrichplots[[i]] <- plotEnrichment(smillie_markers[[i]], gl_RD5_flicRD5)
+}
+names(RD5_flicRD5_enrichplots) <- names(smillie_markers)
+
+RD5_RD1_enrichplots <- list()
+for (i in 1:length(smillie_markers)) {
+RD5_RD1_enrichplots[[i]] <- plotEnrichment(smillie_markers[[i]], gl_RD5_RD1)
+}
+names(RD5_RD1_enrichplots) <- names(smillie_markers)
+
+names(smillie_markers)
+all_enrich_names <- ls(pattern = "_enrichplots")
+all_plots <- map(all_enrich_names, get)
+names(all_plots) <- all_enrich_names
+
+```
+
+```{r eval=FALSE, include=FALSE, echo=FALSE}
+
+SMILLIE_EPITHELIAL_Control <- subListExtract(all_plots, "SMILLIE_EPITHELIAL_Control", keep.names = TRUE)
+ggsave(here::here("info_results", "gsea_plots", "SMILLIE_EPITHELIAL_Control.png"), arrangeGrob(grobs = SMILLIE_EPITHELIAL_Control))
+
+```
+
+
+```{r trying to use map with 2 dfs of differnt vector lengths, eval=FALSE, include=FALSE, echo=FALSE}
+test <- fgsea(smillie_markers, gl_d10_flicRD5)
+
+test <- list()
+
+test <- map(cross2(smillie_markers, all_gl), fgsea)
+
+test <- map2(smillie_markers, all_gl, function(x, y) fgsea(x, y) )
+
+test <- pmap(list(all_gl, smillie_markers), function(first, second) fgsea(second, first))
+
+test <- crossing(smillie_markers, all_gl)
+
+stappenbeck_stables_markers <- map(stappenbeck_stables_markers, ~ .x %>% 
+                                     rownames_to_column(var = "PROBE"))
+                                     
+                                     
+      #another way to write function(x)
+                     slice(3:n())) %>% 
+  dplyr::select(1)                               
+                      
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
