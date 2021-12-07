@@ -21,17 +21,7 @@ A test `.Rmd` document for *visualise* formatting **options**.
 
 ## Header  
 
-```{r}
-library(tidyr)  
 
-if( Sys.info()['sysname'] == "Linux" ) {
-  path <- "/home/BCRICWH.LAN/nikita.telkar/RobinsonLab/Nikita/Projects/cell_sorted/Images/Phred_Scores.png"
-} else {
-    path <- "Z:\\Nikita\\Projects\\cell_sorted\\Images\\Phred_Scores.png"
-} #filepath dependancy on operating system
-
-path
-```
 ***
 
 ### Header  
@@ -48,4 +38,45 @@ path
 
 ###### Header  
 
-***
+***  
+
+```{r}
+
+#for evenly spaced code blocks in HTML
+
+library(formatR)
+library(knitr)
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=100),tidy=TRUE)
+
+#To load custom installed fonts
+
+library(sysfonts)
+library(showtext)
+
+knitr::opts_chunk$set(fig.showtext = TRUE, fig_retina = 1) #needed to render show_text
+knitr::opts_chunk$set(warning = FALSE, error = FALSE, message = FALSE)
+
+#font_add_google("Montserrat", "Mont")
+
+font_paths("C:/Users/nikita.telkar/AppData/Local/Microsoft/Windows/Fonts")
+font_add("Montserrat", regular = "Montserrat-Regular.ttf")
+
+showtext_auto()
+
+```
+
+```{r}
+
+#Setting paths that might differ in Windows and in a Linux environment.
+library(tidyr)  
+
+if( Sys.info()['sysname'] == "Linux" ) {
+  path <- "/home/BCRICWH.LAN/nikita.telkar/RobinsonLab/Nikita/Projects/cell_sorted/Images/Phred_Scores.png"
+} else {
+    path <- "Z:\\Nikita\\Projects\\cell_sorted\\Images\\Phred_Scores.png"
+} #filepath dependancy on operating system
+
+path
+
+```
+

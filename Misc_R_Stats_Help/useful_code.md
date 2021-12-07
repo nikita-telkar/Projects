@@ -180,11 +180,16 @@ https://yihui.org/knitr/options/
 
 ***
 
-#### **Selecting by column number vs name** 
+#### **Selecting by column number/index vs name** 
 
 ```
 s1_zero <- s1_zero %>% 
   filter(.[1] > 0)
+```
+
+```
+s1_zero <- s1_zero %>% 
+  dplyr::select(1,7,9)
 ```
 
 ***  
@@ -203,8 +208,7 @@ eDat_cat <- eDat %>%
     . > 100  ~ "4"))
   )
 
-```  
-***  
+```   
 
 ***  
 
@@ -217,19 +221,67 @@ eDat <- eDat %>%
   
 eDat <- eDat %>%
   replace(.==0, NA)
+```
+  
+#### **Replace NA with 0 or 0 with NA**  
+
+```
+
+pDat %>% 
+  replace(is.na(.), 0)
+  
+mtcars %>% 
+  replace(.==0, NA)
+  
+starwars %>%
+  select(name, eye_color) %>%
+  mutate(eye_color = na_if(eye_color, "unknown"))  
 
 ```  
 ***  
 
-
-#### **Indexing ggplot by column number**
+#### **Indexing ggplot by column number**  
 
 ```
 mir_11361_5p %>% 
   ggplot(aes_string(colnames(test)[2], colnames(test)[3]))
 
 ```  
+
 ***  
 
+#### **Finding Duplicate Values**  
+
+```
+manual$entrezgene_id[duplicated(manual$entrezgene_id)]
+
+```  
+***  
+
+#### **Changing column names of elements/dataframes within a list**  
+
+```
+eDat <- map(eDat, function(x) {colnames(x)[1:6] <- c("gene", "Condition_1", "Condition_2", "FPKM_Condition_1", "FPKM_Condition_2", "log2FC"); x})
+```
+
+***  
+
+#### **Find frequency of values/factor**  
+
+```
+
+pDat %>% 
+  dplyr::count(Condition)
+
+```
+
+```
+
+pDat %>% 
+  dplyr::count(Condition) %>% 
+  filter(n > 1)
+
+```
 
 
+***  
