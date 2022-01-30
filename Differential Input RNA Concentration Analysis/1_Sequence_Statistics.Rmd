@@ -1,0 +1,1594 @@
+---
+title: "GSC Batch 3: Sequence Statistics"
+author: Nikita Telkar 
+date: "August 20, 2021"
+output: 
+  html_document: 
+    keep_md: yes 
+    toc: true 
+    toc_depth: 4
+    # toc_float: 
+    #   collapsed: false 
+    #   smooth_scroll: false 
+    theme: paper
+    highlight: pygments  #tango, pygments, kate, monochrome, espresso, zenburn, haddock, textmate.
+---
+
+### 0.0 Introduction  
+
+Here, I'm going to perform standard EDA on the Batch 3 data (both cell-sorted and whole villi). I'm only going to use miRNAs for all statistics, uness specified.  
+  
+
+***  
+
+### 1.0 Loading files and packages  
+
+```{r knitr options, echo = F}
+
+#to make sure that wrap_text is enabled, and don't have to scroll in code chunks in .html
+
+library(formatR)
+library(knitr)
+opts_chunk$set(tidy.opts=list(width.cutoff = 90),tidy = TRUE)
+opts_chunk$set(message = FALSE, error = FALSE, warning = FALSE)
+
+
+```  
+
+```{r packages, message=FALSE, error=FALSE, warning=FALSE}
+
+library(tidyverse)
+library(here)
+library(readxl)
+library(openxlsx)
+library(arsenal)
+library(pheatmap)
+library(knitr)
+library(rmarkdown)
+library(data.table)
+library(gridExtra)
+library(scales)
+
+```  
+
+```{r font and theme, message=FALSE, error=FALSE, warning=FALSE}
+
+library(showtext)
+library(extrafont)
+
+font_paths("C:/Users/nikita.telkar/AppData/Local/Microsoft/Windows/Fonts")
+font_add("Montserrat", regular = "Montserrat-Regular.ttf")
+
+showtext_auto()
+
+my_theme <- theme_minimal() +
+  theme(plot.title = element_text(family = "Montserrat", size = 14),
+        plot.subtitle = element_text(family = "Montserrat", size = 12),
+        legend.text = element_text(family = "Montserrat", size = 10),
+        axis.title = element_text(family = "Montserrat", size = 14))
+
+colpal <- list(Titration = c(`250` = "#003f5c", `100` = "#444e86", `50` = "#955196", `25` = "#dd5182", `5` = "#ff6e54", `1` = "#ffa600"),
+               Conc = c(`10` = "#00cfe3", `50` = "#003f5c"),
+               Trimester = c(`First` = "#8bab48", `Term` = "#488f31"),
+               Extraction = c(`TRIzol` = "#de425b", `miRVana` = "#009900"),
+               Cell_type = c(`Trophoblast` = "#5ab33d", `Stromal` = "#ffb708", `Endothelial` = "#f95d6a", `Hofbauer` = "#0075ab", `Villi` = "#b30000"),
+               PM = c(`PM384` = "#f2c080", `PM385` = "#496076"),
+               DNased = c(`Yes` = "#67c392", `No` = "#969695"))
+
+```  
+
+```{r data}
+
+
+eDat <- readRDS(file = here::here("Batch_3", "data", "processed", "eDat.RDS"))
+pDat <- readRDS(file = here::here("Batch_3", "data", "processed", "pDat.RDS"))
+mDat <- readRDS(file = here::here("Batch_3", "data", "processed", "mDat.RDS"))
+all <- readRDS(file = here::here("Batch_3", "data", "processed", "all_sncRNA.RDS"))
+
+eDat_Batch2 <- read_excel("Z:/Nikita/Projects/titration/data/external/overview_run_n_w_hrtp-cs_test_all_250-1_test_1/quantification_raw.xlsx")
+pDat_Batch2 <- read_excel(here::here("Batch_3", "data", "processed", "pDat_Batch2.xlsx"))
+mDat_Batch2 <- readRDS("Z:/Nikita/Projects/titration/data/processed/mDat_GSC_1790.rds")
+
+#pDat containing only PL290 and TCR Samples
+pDat_Batch3 <- read_excel(here::here("Batch_3", "data", "processed", "pDat_Batch3.xlsx"))
+
+```  
+
+Making separate dfs for `PL290v and TCR-5-18` and `PM384 and PM385` samples
+
+```{r formatting eDats and pDats}
+
+#splitting all Batch 3 by sncRNA
+all_list <- all %>%
+ split(f = as.factor(.$sncRNA))
+sncRNA_order <- names(all_list)
+
+#making Sample Column
+pDat_Batch2 <- pDat_Batch2 %>% 
+  mutate(v = case_when(
+    Case_ID == "PL290" ~ "PL290",
+    Case_ID == "TCR-2-18_v_SNAP" ~ "TCR"
+  ))
+
+pDat_Batch2 <- pDat_Batch2 %>%
+ unite("Sample", c("v", "Titration"), sep = "_", remove = FALSE)
+pDat_Batch2 <- pDat_Batch2[-c(12)]
+
+
+#keeping only PL290 and TCR 250 - 5 ng samples
+eDat_Batch2 <- eDat_Batch2 %>%
+ unite("Reference", 1:2, sep = "_", remove = TRUE)
+eDat_Batch2 <- eDat_Batch2[c(1:13)]
+names(eDat_Batch2)
+colnames(eDat_Batch2) [2:13] <- pDat_Batch2$Sample
+
+
+#subsetting only PL290 and TCR expression columns from Batch 3
+eDat_Batch3 <- all[c(1,2,23:28)]
+eDat_Batch3 <- eDat_Batch3 %>% 
+  filter(sncRNA == "miRNA") %>% 
+  dplyr::select(-sncRNA)
+
+
+#funnily enough, the total number of miRNAs mapped for Batch 2 and Batch 3 were the same 
+
+
+#making PL290 and TCR Batch 2 and 3 samples eDat
+eDat_conc <- eDat_Batch2 %>% 
+  inner_join(eDat_Batch3, by = "Reference")
+
+#matching column order of pDat2 to pDat3
+pDat_Batch2 <- pDat_Batch2[names(pDat_Batch3)]
+
+#making PL290 and TCR Batch 2 and 3 samples pDat
+pDat_conc <- rbind(pDat_Batch2, pDat_Batch3)
+glimpse(pDat_conc)
+pDat_conc$Titration <- as.factor(pDat_conc$Titration)
+pDat_conc$Extraction <- as.factor(pDat_conc$Extraction)
+pDat_conc$Beads <- as.factor(pDat_conc$Beads)
+pDat_conc$GSC_Batch <- as.factor(pDat_conc$GSC_Batch)
+
+eDat_conc <- eDat_conc %>%
+  column_to_rownames(var = "Reference")
+
+#for easier reference later on
+colnames(eDat_conc)[13:14] <- c("PL290_50_2", "TCR_50_2")
+
+all(colnames(eDat_conc) == pDat_conc$Sample)
+
+
+#Making pDat and eDat for PM384 and PM385
+
+pDat_PMs <- mDat[27:30,]
+pDat_PMs <- rbind(pDat_PMs, mDat[20,])
+pDat_PMs <- pDat_PMs %>%#chnaging order of rows
+  slice(3,1,4,2,5)
+eDat_PMs <- all[c(1,2,31,29,32,30,22)]
+# eDat_PMs <- eDat %>% 
+#   dplyr::select(which(names(eDat) %in% pDat_PMs$Sample))
+eDat_PMs <- eDat_PMs %>%
+ split(f = as.factor(.$sncRNA))
+
+eDat_miRNA <- all %>% 
+  filter(sncRNA == "miRNA") %>% 
+  dplyr::select(-sncRNA) %>% 
+  column_to_rownames(var = "Reference")
+
+
+```  
+
+### 2.0 Cell-Sorted Samples  
+
+#### 2.1 Summary on Sequences / Reads QC
+
+```{r reads overwiew, fig.width = 12, fig.length = 8, warning=FALSE, echo=FALSE}
+
+library(scales)
+
+mDat[1:19,] %>% 
+  dplyr::select(RobLab_ID, Sample, Case_ID, Titration, Total_reads, Post_min17_trim_retained, Post_min17_trim_dropped) %>% 
+  pivot_longer(cols = 5:7, names_to = "filter", values_to = "reads") %>% 
+  mutate(filter = fct_relevel(filter, c("Total_reads", "Post_min17_trim_retained", "Post_min17_trim_dropped"))) %>% 
+  ggplot(aes(x = Sample, y = reads, colour = filter, shape = as.factor(Titration))) +
+  scale_colour_manual(values = c("#0075ab", "#5ab33d", "#f95d6a")) +
+  geom_point(size = 2.5) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1)) +
+  theme(legend.position = "bottom", legend.box="vertical", legend.margin=margin()) +
+  facet_wrap(~Case_ID, scales = "free") +
+  scale_y_continuous(labels = comma_format(), expand = expansion(mult = c(0, .09))) +
+  labs(title = "Reads pre and post trimming", x = "Sample", y = "No. of reads", colour = "Filter", shape = "Titration")
+
+
+mDat[1:19,] %>% 
+  dplyr::select(RobLab_ID, Sample, Case_ID, Titration, Total_reads, Post_min17_trim_retained, Post_min17_trim_dropped) %>% 
+  pivot_longer(cols = 6:7, names_to = "filter", values_to = "reads") %>% 
+  mutate(filter = fct_relevel(filter, c("Total_reads", "Post_min17_trim_retained", "Post_min17_trim_dropped"))) %>% 
+  ggplot(aes(x = Sample, y = reads, fill = filter)) +
+  geom_bar(stat = "identity", width = 0.8) +
+  geom_text(aes(label = Total_reads), colour = "black", vjust = -1, data = . %>% filter(filter == "Post_min17_trim_dropped")) +
+  scale_fill_manual(values = c("#488f31", "#ffa600")) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1)) +
+  theme(legend.position = "bottom", legend.box="vertical", legend.margin=margin()) +
+  facet_wrap(~Case_ID, scales = "free") +
+  scale_y_continuous(labels = comma_format(), expand = expansion(mult = c(0, .09))) +
+  scale_x_discrete(expand = expansion(add = 2)) +
+  labs(title = "Reads pre and post trimming", subtitle = "Floating number indicate total reads aligned", x = "Sample", y = "No. of reads", colour = "Filter")
+
+mDat[1:19,] %>% 
+  dplyr::select(RobLab_ID, Sample, Case_ID, Titration, Total_Mapped_on_Precursor_or_miRNA, Total_Unmapped) %>% 
+  pivot_longer(cols = 5:6, names_to = "Mapped", values_to = "Percentage") %>% 
+  mutate(Mapped = fct_relevel(Mapped, c("Total_Mapped_on_Precursor_or_miRNA", "Total_Unmapped")),
+         Percentage = as.numeric(Percentage),
+         Percentage = round(Percentage, digits = 1)) %>% 
+  ggplot(aes(x = Sample, y = Percentage, fill = Mapped)) +
+  geom_bar(stat = "identity", width = 0.8) +
+  #geom_text(aes(label = Percentage), colour = "black") +
+  scale_fill_manual(values = c("#5ab33d", "#f95d6a")) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1)) +
+  theme(legend.position = "bottom", legend.box="vertical", legend.margin=margin()) +
+  facet_wrap(~Case_ID, scales = "free") +
+  coord_cartesian(y = c(0, 100)) +
+  scale_y_continuous(breaks=seq(0, 100, 10), expand =c(0,0)) +
+  scale_x_discrete(expand = expansion(add = 2)) +
+  labs(title = "Mapped vs. Unmapped Reads", x = "Sample", y = "Percentage", colour = "Percentage")
+
+```  
+
+> The GSC has already advised that 30-50% of the reads covered are true miRNAs, so the higher percentage figure seen for unmapped reads make sense.  
+
+***  
+
+#### 2.2 Read Filtering {.tabset}
+
+##### Total Reads for all sncRNAs for all cell-sorted samples   
+
+```{r cs total reads df, fig.width=10, echo=FALSE}
+
+#splitting in a cs only df
+total_reads_cs <- mDat[1:19,]
+
+total_reads_cs <- total_reads_cs[c("Sample", "RobLab_ID", "Case_ID", "GSC_RNAconc_ng_ul", "Titration", "Titrated",  "Sample_type", "Cell_type", "miRNA", "piRNA", "rRNA", "scaRNA", "snoRNA", "snRNA", "tRNA", "miscRNA")]
+
+total_reads_cs <- total_reads_cs %>% 
+  pivot_longer(cols = 9:16, names_to = "sncRNA", values_to = "reads")
+
+head(total_reads_cs)
+
+total_reads_cs %>% 
+  ggplot(aes(x = Case_ID, y = reads, fill = as.factor(Cell_type), colour = as.factor(Titration))) +
+  geom_bar(stat = "identity", position = position_dodge2(preserve = "single")) +
+  scale_colour_manual(values = c("white", "black")) +
+  scale_fill_manual(values = colpal$Cell_type) +
+  facet_wrap(~sncRNA, scales = "free") +
+  my_theme +
+  theme(legend.position = "bottom") +
+  scale_y_continuous(labels = comma, expand = expansion(mult = c(0, .09))) +
+  labs(title = "Total Reads by sncRNA species", x = "Sample", y = "Raw Reads", colour = "Titration", fill = "Cell_type")
+
+```
+
+##### Total miRNA Reads for all cell-sorted samples   
+
+```{r total mirna reads df, fig.width=10, echo=FALSE}
+
+pDat_cs <- mDat [1:19,]
+
+pDat_cs %>% 
+  ggplot(aes(x = RobLab_ID, y = miRNA, fill = as.factor(Titration), group = Sample)) +
+  geom_bar(stat = "identity", position = position_dodge2(preserve = "single")) +
+  scale_fill_manual(values = c("#00cfe3", "#003f5c")) +
+  facet_wrap(~Case_ID, scales = "free_x") +
+  scale_y_continuous(labels = comma, expand = expansion(mult = c(0, .09))) +
+  labs(title = "Total miRNA Reads for Cell Sorted Samples", subtitle = "Titrated Cell Sorted samples only\n", x = "Samples", y = "Total Reads", fill = "Titration") +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1)) +
+  theme(legend.position = "bottom")
+
+``` 
+
+***  
+
+#### 2.3 Species Filtering   
+
+I'm going to now count the number of miRNA species for each sample which have:  
+
+- At least 1 read count for a species  
+- At at least 10 read counts for a species  
+
+```{r miRNA species, eval=FALSE}
+
+miRNA_species <- all_list$miRNA
+miRNA_species <- miRNA_species[-c(1,2)]
+
+#all miRNA species with at least 1 count
+miRNA_species_1 <- colSums(miRNA_species != 0)
+
+miRNA_species_1 <- as.data.frame(miRNA_species_1)
+miRNA_species_1$miRNA_species_2 <-  colSums(miRNA_species >= 2) 
+miRNA_species_1$miRNA_species_10 <- colSums(miRNA_species >= 10) #all miRNA species with at least 10 counts
+
+colnames(miRNA_species_1)[1] <- "miRNA_species_1"
+
+miRNA_species <- miRNA_species_1
+rm(miRNA_species_1)
+
+miRNA_species <- miRNA_species %>% 
+  rownames_to_column(var = "Sample")
+
+mDat <- mDat %>% 
+  inner_join(miRNA_species, by = "Sample")
+
+miRNA_species %>% 
+  kable()
+
+```  
+
+
+``` {r min count}
+
+#function to get dimensions of a list
+f1 <- function(x) {
+    list(dim = dim(x))
+}
+
+
+cs_list <- all[c(1:21)]
+
+cs_list <- cs_list %>%
+ split(f = as.factor(.$sncRNA))
+
+dim_all <- lapply(cs_list, f1)
+dim_all <- as.data.frame(unlist(dim_all))
+
+
+#only keeping seqs with read count of >= 2
+total_species <- map(cs_list, function(x) x %>% 
+                       dplyr::select(-sncRNA) %>% 
+                       filter_all(all_vars(. >= 2))) 
+
+#Hmm, looks like none of the scaRNAs passed that minimum 2 filter
+
+total_species <- within(total_species, rm(scaRNA)) 
+
+total_species <- map(total_species, function(x) x %>% 
+        column_to_rownames(var = "Reference"))
+
+total_species %>% 
+  map(function(x) x %>% 
+        min(x))
+
+```  
+
+```{r total species and filtering, fig.width = 10, eval=FALSE, echo=FALSE, include=FALSE}
+
+#Doesn't make sense to filter all sample together, as all have differnet titrations
+
+# I'm going to now filter only the **cell-sorted** samples by:  
+# 
+# - at least 2 reads for each species in each sample (as the minimum viable read count)  
+# - at least 10 reads for each species in each sample
+
+#getting total number of species aligned
+
+
+dim_species <- lapply(total_species, f1)
+dim_species <- as.data.frame(unlist(dim_species))
+
+
+#only keeping seqs with read count of >= 10
+species_min10 <- map(cs_list, function(x) x %>% 
+                       dplyr::select(-sncRNA) %>% 
+                       filter_all(all_vars(. >= 10))) 
+
+species_min10 <- lapply(species_min10, f1)
+species_min10 <- as.data.frame(unlist(species_min10))
+
+
+#making a df of all species, and species after filtering
+dim_species <- cbind(dim_all, dim_species, species_min10)
+dim_species$v <- c("rows", "columns")
+dim_species <- dim_species %>% 
+  filter(v == "rows")
+colnames(dim_species)[1:3] <- c("all_species", "species_min2", "species_min10")
+row.names(dim_species) <- sncRNA_order
+
+dim_species <- dim_species %>% 
+  dplyr::select(-v) %>% 
+  mutate(species_dropped_min2 = all_species - species_min2,
+         species_dropped_min10 = all_species - species_min10,
+         perc_drop_min2 = (species_dropped_min2/all_species)*100,
+         perc_drop_min10 = (species_dropped_min10/all_species)*100,
+         perc_drop_min2 = round(perc_drop_min2, digits =1),
+         perc_drop_min10 = round(perc_drop_min10, digits =1)) %>% 
+         dplyr::select(all_species, species_min2, species_dropped_min2, perc_drop_min2, species_min10, species_dropped_min10, perc_drop_min10)
+
+#install.packages("gtsummary")
+# library(gtsummary)
+# dim_species %>% 
+#  tbl_summary()
+
+dim_species %>% 
+  kable()
+
+dim_species %>% 
+  dplyr::select(all_species, species_min2, species_min10) %>% 
+  rownames_to_column(var = "sncRNA") %>% 
+  pivot_longer(cols = 2:4, names_to = "filtering_critria", values_to = "no_of_species") %>% 
+  mutate(filtering_critria = fct_relevel(filtering_critria, c("all_species", "species_min2", "species_min10"))) %>% 
+  ggplot(aes(x = sncRNA, y = no_of_species, fill = filtering_critria)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.8) +
+  geom_text(aes(label = no_of_species), colour = "#333333", vjust = -0.8, position = position_dodge(0.8)) +
+  scale_fill_manual(values = c("#003f5c", "#ffa600", "#488f31")) +
+  scale_y_continuous(expand = expansion(mult = c(0, .09))) +
+  my_theme +
+  theme(legend.position = "bottom") +
+  labs(title = "Total sncRNA species", subtitle = "Cell-sorted samples only\n", x = "sncRNA", y = "No. of Species", fill = "Filtering Critria")
+
+
+```
+
+
+Perfect, the lowest read count value for all sncRNA species is 2.  
+
+***  
+
+#### 2.4 miRNAs Statistics  
+
+```{r, fig.width = 18, fig.height = 14, echo=FALSE}
+
+pDat_cs <- mDat [1:19,]
+
+t1 <- pDat_cs %>% 
+  dplyr::select(RobLab_ID, Post_min17_trim_retained, Total_Mapped_on_Precursor_or_miRNA, miRNA) %>% 
+  mutate(Total_Mapped_on_Precursor_or_miRNA = round(Total_Mapped_on_Precursor_or_miRNA, digits = 1)) %>% 
+  tableGrob()
+
+
+# --> DODGED BAR CHARTS WERE NOT APPERING IN ORDER OF 10 AND THEN 50, SO HAD TO USE GROUP TO SPECIFY ORDER
+
+g1 <- pDat_cs %>% 
+  mutate(Total_Mapped_on_Precursor_or_miRNA = round(Total_Mapped_on_Precursor_or_miRNA, digits = 1)) %>% 
+  ggplot(aes(x = RobLab_ID, y = Total_Mapped_on_Precursor_or_miRNA, fill = Titration, group = Sample)) +
+  geom_bar(stat = "identity", position = position_dodge2(preserve = "single"), width = 0.8) +
+  # geom_text(aes(label = miRNA), colour = "#333333", vjust = -0.8, position = position_dodge(0.8)) +
+  scale_fill_manual(values = c("#00cfe3", "#003f5c")) +
+  scale_y_continuous(breaks=seq(0, 100, 10)) +
+  facet_wrap(~Case_ID, scales = "free_x") +
+  labs(title = "Total percent of reads mapped to miRNA or miRNA precursor", subtitle = "Cell Sorted samples only", x = "Samples", y = "Percentage of reads aligned", fill = "Titration") +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1)) +
+  theme(legend.position = "top")
+
+g2 <- pDat_cs %>% 
+  mutate(Total_Mapped_on_Precursor_or_miRNA = round(Total_Mapped_on_Precursor_or_miRNA, digits = 1)) %>% 
+  ggplot(aes(x = RobLab_ID, y = Total_Mapped_on_Precursor_or_miRNA, fill = as.factor(Cell_type), colour = Titration, group = Sample)) +
+  geom_bar(stat = "identity", position = position_dodge2(preserve = "single"), width = 0.8) +
+  scale_fill_manual(values = colpal$Cell_type) +
+  scale_colour_manual(values = c("white", "black")) +
+  scale_y_continuous(breaks=seq(0, 100, 10)) +
+  facet_wrap(~Case_ID, scales = "free_x") +
+  labs(title = "Total percent of reads mapped to miRNA or miRNA precursor", subtitle = "Cell Sorted samples only", x = "Samples", y = "Percentage of reads aligned", fill = "Titration") +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1)) +
+  theme(legend.position = "bottom")
+
+#remotes::install_github("coolbutuseless/ggpattern")
+# library(ggpattern)
+# 
+# pDat_cs %>% 
+#   mutate(Total_Mapped_on_Precursor_or_miRNA = round(Total_Mapped_on_Precursor_or_miRNA, digits = 1)) %>% 
+#   mutate(Titration = as.character(Titration)) %>% 
+#   mutate(Titration_chr = recode(Titration, "10" = "ten", "50" = "fifty")) %>% 
+#   ggplot(aes(x = Case_ID, y = Total_Mapped_on_Precursor_or_miRNA, pattern = Titration_chr, fill = as.factor(Cell_type), group = Sample)) +
+#   geom_col_pattern(position = position_dodge2(preserve = "single"), width = 0.8, pattern = "stripe", pattern_fill = "white", pattern_colour = "white") +
+#   scale_pattern_manual(values = c("ten" == "stripe", "fifty" == "none")) +
+#   scale_fill_manual(values = colpal$Cell_type) +
+#   #scale_colour_manual(values = c("white", "black")) +
+#   scale_y_continuous(breaks=seq(0, 100, 10)) +
+#  # facet_wrap(~Case_ID, scales = "free_x") +
+#   labs(title = "Total percent of reads mapped to miRNA or miRNA precursor", subtitle = "Titrated Cell Sorted samples only", x = "Samples", y = "Percentage of reads aligned", fill = "Cell Type", pattern = "Titration") + 
+#   theme(axis.text.x = element_text(angle = 35, hjust = 1)) +
+#   theme(legend.position = "bottom")
+
+grid.arrange(g1, t1, g2, nrow = 2)
+
+```  
+
+***  
+
+Total miRNAs filtered by minimum read count  
+
+```{r}
+
+order <- pDat_cs$Sample
+pDat_cs$Sample <- fct_relevel(pDat_cs$Sample, order)
+
+pDat_cs %>%
+  pivot_longer(cols = c(miRNA_species_1, miRNA_species_2, miRNA_species_10), names_to = "filtering_criteria", values_to = "no_of_species") %>%
+  mutate(filtering_criteria = fct_relevel(filtering_criteria, c("miRNA_species_1", "miRNA_species_2", "miRNA_species_10"))) %>%
+  ggplot(aes(x = Titration, y = no_of_species, fill = filtering_criteria, group = Sample)) + 
+  geom_bar(stat = "identity", position = position_dodge2(preserve = "single"), width = 0.8) + 
+ # geom_text(aes(label = no_of_species), colour = "#333333", vjust = -0.8, position = position_dodge(0.8)) + 
+  scale_fill_manual(values = c("#003f5c","#ffa600", "#488f31")) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.09))) + 
+  facet_grid(rows = vars(Case_ID), scales = "free_x", space = "free", cols = vars(Cell_type)) +
+  my_theme +
+  theme(legend.position = "bottom") + 
+  #theme(axis.text.x = element_text(angle = 35, hjust = 1)) +
+  labs(title = "miRNA species", subtitle = "By filtering criteria (Total miRNAs = 2887)", x = "Filtering Criteria", y = "No. of Species", fill = "Filtering Critria")
+
+```
+
+
+***  
+
+
+##### miRNA species vs. Total miRNA Reads  {.tabset}  
+
+1. Total miRNA Reads vs Percentage of Reads Mapped  
+
+```{r total mapped vs reads plots, fig.width = 11, fig.length = 8, echo=FALSE}
+
+pDat_cs %>% 
+  ggplot(aes(x = miRNA, y = Total_Mapped_on_Precursor_or_miRNA, colour = Cell_type, shape = Titration)) +
+  geom_point(size = 3, alpha = 0.8) +
+  scale_colour_manual(values = colpal$Cell_type) +
+  scale_y_continuous(breaks=seq(0, 100, 10)) +
+  scale_x_continuous(labels = comma_format(), expand = expansion(mult = c(0, .09))) +
+  coord_cartesian(x = c(0, 11500000), y = c(0,100)) +
+  facet_wrap(~Case_ID, scales = "free_x") +
+  labs(title = "Total miRNA Reads vs Percentage of Reads Mapped", subtitle = "Cell Sorted samples only", x = "\nTotal miRNA Reads", y = "Percentage of Reads", Colour = "Cell Type", Shape = "Titration") + 
+  my_theme +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1)) +
+  theme(legend.position = "bottom", legend.box = "vertical", legend.margin = margin()) +
+  theme(panel.spacing.x = unit(2, "lines"))
+
+```  
+
+***  
+
+###### 2. Total miRNA species with >=1 read  
+
+```{r cs total reads species plots 1, fig.width = 10, echo=FALSE}
+
+pDat_cs %>% 
+  ggplot(aes(x = miRNA, y = miRNA_species_1, colour = Cell_type, shape = Titration)) +
+  geom_point(size = 3, alpha = 0.8) +
+  scale_colour_manual(values = colpal$Cell_type) +
+  scale_y_continuous(breaks=seq(0, 1400, 100)) +
+  scale_x_continuous(labels = comma_format(), expand = expansion(mult = c(0, .09))) +
+  coord_cartesian(x = c(0, 11500000)) +
+  facet_wrap(~Case_ID, scales = "free_x") +
+  labs(title = "miRNA Species vs Total miRNA Reads: Cell-Sorted Samples only", subtitle = "miRNA Species with at least 1 read (Total miRNAs aligned: 2887)\n", x = "\nTotal miRNA Reads", y = "miRNA Species", Colour = "Cell Type", Shape = "Titration") + 
+  my_theme +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1)) +
+  theme(legend.position = "bottom", legend.box = "vertical", legend.margin = margin()) +
+  theme(panel.spacing.x = unit(2, "lines"))
+
+```  
+
+***  
+
+###### 3. Total miRNA species with >=2 read  
+
+```{r cs total reads species plots 2, fig.width = 10, echo=FALSE}
+
+pDat_cs %>% 
+  ggplot(aes(x = miRNA, y = miRNA_species_2, colour = Cell_type, shape = Titration)) +
+  geom_point(size = 3, alpha = 0.8) +
+  scale_colour_manual(values = colpal$Cell_type) +
+  scale_y_continuous(breaks=seq(0, 1400, 100)) +
+  scale_x_continuous(labels = comma_format(), expand = expansion(mult = c(0, .09))) +
+  coord_cartesian(x = c(0, 11500000)) +
+  facet_wrap(~Case_ID, scales = "free_x") +
+  labs(title = "miRNA Species vs Total miRNA Reads: Cell-Sorted Samples only", subtitle = "miRNA Species with at least 2 reads (Total miRNAs aligned: 2887)\n", x = "\nTotal miRNA Reads", y = "miRNA Species", Colour = "Cell Type", Shape = "Titration") + 
+  my_theme +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1)) +
+  theme(legend.position = "bottom", legend.box = "vertical", legend.margin = margin()) +
+  theme(panel.spacing.x = unit(2, "lines"))
+
+```  
+
+
+###### 4. Total miRNA species with >=10 reads  
+
+```{r cs total reads species plots 3, fig.width = 10, echo=FALSE}
+
+pDat_cs %>% 
+  ggplot(aes(x = miRNA, y = miRNA_species_10, colour = Cell_type, shape = Titration)) +
+  geom_point(size = 3, alpha = 0.8) +
+  scale_colour_manual(values = colpal$Cell_type) +
+  scale_y_continuous(breaks=seq(0,800, 100)) +
+  scale_x_continuous(labels = comma_format(), expand = expansion(mult = c(0, .09))) +
+  coord_cartesian(x = c(0, 11500000)) +
+  facet_wrap(~Case_ID, scales = "free_x") +
+  labs(title = "miRNA Species vs Total miRNA Reads: Cell-Sorted Samples only", subtitle = "miRNA Species with at least 10 reads (Total miRNAs aligned: 2887)\n", x = "\nTotal miRNA Reads", y = "miRNA Species", Colour = "Cell Type", Shape = "Titration") + 
+  my_theme +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1)) +
+  theme(legend.position = "bottom", legend.box = "vertical", legend.margin = margin()) +
+  theme(panel.spacing.x = unit(2, "lines"))
+
+
+```
+
+
+
+#### 2.5 Comparing Manual vs. miRMaster Aligned Counts  
+
+For sample PL289_50 (GSC ID: M20072), I manually aligned the reads using STAR to the reference hg38 genome. I'll compare a few statistics here:  
+
+```{r manual counts, fig.width = 8}
+
+manual <- read_excel(here::here("Batch_3", "data", "processed", "M20072_counts_manual.xlsx"))
+manual_mDat <- read_excel(here::here("Batch_3", "data", "processed", "M20072_counts_manual_mDat.xlsx"))
+
+#manual sequences have already filtered for minimum read count of 2
+head(manual)
+
+manual_list <- manual_mDat %>%
+ split(f = as.factor(.$gene_biotype))
+
+manual_list <- lapply(manual_list, f1)
+manual_list <- as.data.frame(unlist(manual_list))
+
+
+#selecting PL289_50 miRMaster data
+M20072_miRMaster <- all %>% 
+  dplyr::select(Reference, sncRNA, PL289_50)
+dim(M20072_miRMaster)
+
+#filtering to keep min count of 2
+M20072_miRMaster <- M20072_miRMaster %>% 
+  filter(PL289_50 >=2)
+dim(M20072_miRMaster)
+
+M20072_miRMaster <- M20072_miRMaster %>%
+ split(f = as.factor(.$sncRNA))
+
+M20072_miRMaster <- lapply(M20072_miRMaster, f1)
+M20072_miRMaster <- as.data.frame(unlist(M20072_miRMaster))
+
+#there's no piRNA and tRNA mapped at all in manual, and it has lncRNA. Will have to remove lncRNA and add tRNA and piRNA
+sncrownames <- row.names(M20072_miRMaster)
+sncrownames
+sncrownames <- sncrownames[c(5,6,15,16)]
+sncrownames <- as.data.frame(sncrownames)
+sncrownames$M20072_manual <- 0
+sncrownames <- sncrownames %>% 
+  column_to_rownames(var = "sncrownames")
+
+#now removing lncRNA and binding sncrownames rows to manual
+manual_list <- tail(manual_list, -2)
+colnames(manual_list)[1] <- "M20072_manual"
+manual_list <- rbind(manual_list, sncrownames)
+
+#let's check that the sncRNAs are in the right order
+row.names(manual_list)
+row.names(M20072_miRMaster)
+#they're not. Also, manual has miscRNA listed as misc_RNA. Removing that underscrore:  
+manual_list <- as.data.frame(t(manual_list))
+names(manual_list)
+colnames(manual_list)[3:4] <- c("miscRNA.dim1", "miscRNA.dim2")
+manual_list <- as.data.frame(t(manual_list))
+
+manual_list <- manual_list %>% 
+  rownames_to_column(var = "sncRNA")
+M20072_miRMaster <- M20072_miRMaster %>% 
+  rownames_to_column(var = "sncRNA")
+
+M20072 <- manual_list %>% 
+  inner_join(M20072_miRMaster, by = "sncRNA")
+M20072 <- M20072 %>% 
+  column_to_rownames(var = "sncRNA")
+M20072$v <- c("rows", "columns")
+M20072 <- M20072 %>% 
+  filter(v == "rows")
+colnames(M20072)[1:2] <- c("M20072_manual", "M20072_miRMaster")
+row.names(M20072)
+row.names(M20072) <- c("miRNA", "miscRNA", "rRNA", "scaRNA", "snoRNA", "snRNA", "piRNA", "tRNA")
+M20072 <- M20072[c(1,2)]
+M20072 %>% 
+  kable()
+
+M20072 %>% 
+  rownames_to_column(var = "sncRNA") %>% 
+  pivot_longer(cols =2:3, names_to = "Mapping", values_to = "Species") %>% 
+  ggplot(aes(x = sncRNA, y = Species, fill = Mapping)) +
+  geom_bar(stat = "identity", position = position_dodge2(preserve = "single"), width = 0.6) +
+  geom_text(aes(label = Species), vjust = -0.8, colour = "#333333", position = position_dodge(0.65)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.09))) +
+  scale_fill_manual(values = c("#ec7e74", "#b44a56")) +
+  my_theme +
+  theme(legend.position = "bottom") +
+  labs(title = "M20072 sncRNA Species by Alignment Method", subtitle = "Manual Alignment vs. miRMaster: minimum count of 2 reads", x = "sncRNA", y = "No. of Species", fill = "Alignment
+       Method")
+
+``` 
+
+The actual expression counts cannot be compared because manual mapping only gives the miRNA in it's precursor form i.e., mir-21 and miRMaster align it using mir-21-3p and mir-21-5p  
+
+***  
+
+#### 2.7 Frequency of species by read categories  
+
+```{r cs comparing read counts, fig.width=9}
+
+# cs_mirna <- read_excel(here::here("Batch_3", "data", "processed", "GSCBatch3_all_miRMaster", "miRNA_quantification_raw.xlsx"))
+  
+cs_mirs <- all %>% 
+  filter(sncRNA == "miRNA") %>% 
+  dplyr::select(-sncRNA) %>% 
+  column_to_rownames(var = "Reference")
+
+cs_mirs <- cs_mirs[c(1:19)]
+
+# cs_mirna <- cs_mirna %>% 
+#   separate(Reference, c("precursor", "mature"), sep = "_")
+# #it looks like there's several precursor miRNAs of hsa-mir-10401, and 2 each of hsa-mir-4477a and hsa-mir-4477b --> Given that they all have the same mature miRNA exp, I'm going to get rid of those
+# cs_mirna <- cs_mirna %>% 
+#   slice(-c(61, 62, 63, 64, 65, 66, 1253, 1255))
+
+#removing rows with 0 reads
+cs_mirna <- cs_mirs %>% 
+  filter_all(any_vars(. != 0))
+
+#examining duplicate mature miRNAs
+# cs_mirna$dup <- duplicated(cs_mirna$mature)
+# cs_mirna %>% 
+#   count(dup)
+# cs_dups <- cs_mirna %>% 
+#   filter(dup == "TRUE")
+
+cs_mirna <- as.data.frame(t(cs_mirna))
+cs_mirna$Cell <- pDat_cs$Cell_type
+cs_mirna$Case_ID <- pDat_cs$Case_ID
+cs_mirna$Titration <-  pDat_cs$Titration
+cs_mirna <- cs_mirna %>% 
+  unite("ID", c("Case_ID", "Titration"), sep = "_", remove = FALSE)
+
+cs_mirna <- cs_mirna %>% 
+  rownames_to_column(var = "Sample") %>% 
+  pivot_longer(cols = c(-Sample, -ID, -Cell, -Titration, - Case_ID), names_to = "miRNA", values_to = "Reads") %>% 
+  mutate(Reads_cat = case_when(
+    Reads == 0 ~ "0",
+    between(Reads, 1, 9) ~ "1 to 9",
+    between(Reads, 10, 99) ~ "10 to 99",
+    between(Reads, 100, 999) ~ "100 to 999",
+    Reads >= 1000 ~ ">1000"),
+    Reads_cat = as.factor(Reads_cat),
+    Reads_cat = fct_relevel(Reads_cat, c("0", "1 to 9", "10 to 99", "100 to 999", ">1000")))
+
+cs_mirna %>% 
+  ggplot(aes(x = Reads_cat, fill = Reads_cat)) +
+  geom_bar(stat = "count") +
+  facet_grid(rows = vars(ID), cols = vars(Cell)) +
+  scale_fill_manual(values = c("#001144", "#004c6d", "#1a6f92", "#3194b7", "#48bbdb")) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1)) +
+  labs(title = "Reads for all miRNAs within each sample", subtitle = "miRNAs with count of 0 in all samples have previously been  filtered out", x = "Reads", y = "No. of miRNAs", fill = "Reads")
+
+cs_mirna %>% 
+  filter(Reads > 0) %>% 
+  ggplot(aes(x = Reads_cat, fill = Reads_cat)) +
+  geom_bar(stat = "count") +
+  facet_grid(rows = vars(ID), cols = vars(Cell)) +
+  scale_fill_manual(values = c("#004c6d", "#1a6f92", "#3194b7", "#48bbdb")) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1)) +
+  labs(title = "Reads for all miRNAs within each sample: 0 counts removed", subtitle = "miRNAs with count of 0 in all samples have previously been  filtered out", x = "Reads", y = "No. of miRNAs", fill = "Reads")
+
+cs_mirna %>% 
+  filter(Reads >= 2) %>% 
+  ggplot(aes(x = Reads_cat, fill = Reads_cat)) +
+  geom_bar(stat = "count") +
+  facet_grid(rows = vars(ID), cols = vars(Cell)) +
+  scale_fill_manual(values = c("#004c6d", "#1a6f92", "#3194b7", "#48bbdb")) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1)) +
+  labs(title = "Reads for all miRNAs within each sample: min count of 2", subtitle = "miRNAs with count of 0 in all samples have previously been  filtered out", x = "Reads", y = "No. of miRNAs", fill = "Reads")
+
+```
+
+```{r pm367 10ng, fig.width=12, eval=FALSE, echo=FALSE, include=FALSE}
+
+#subsetting only the 10ng samples fro PM367
+pm357_10 <- pDat_cs %>% 
+  filter(Case_ID =="PM367") %>% 
+  filter(Titration == "10")
+
+pm357_10 <- eDat_miRNA %>% 
+  dplyr::select(which(colnames(eDat_miRNA) %in% pm357_10$Sample))
+
+pm357_10 <- pm357_10 %>% 
+  filter_all(all_vars(. >= 2)) 
+
+pm357_10 <- as.data.frame(t(pm357_10))
+
+#doesn't make sense to compare between the different cell types. Have to compare for different titrations.
+pm357_10 %>% 
+  rownames_to_column(var = "Sample") %>% 
+  mutate(Cells = factor(c("Endothelial", "Trophoblast", "Stromal", "Hofbauer", "Villi"), levels = c( "Trophoblast", "Stromal", "Endothelial", "Hofbauer", "Villi"))) %>% 
+  dplyr::select(Sample, Cells, everything()) %>% 
+  pivot_longer(cols = 3:296, names_to = "miRNA", values_to = "Reads") %>% 
+  ggplot(aes(x = miRNA, y = log10(Reads), colour = Cells)) +
+  geom_point(size = 2) +
+  scale_colour_manual(values = colpal$Cell_type) +
+ # scale_y_continuous(breaks=seq(0, 20, 5)) +
+  my_theme +
+  theme(axis.text.x = element_blank(), legend.position = "bottom") +
+  labs(title = "Expression of miRNAs for PM367 10ng", subtitle = "Samples were filtered for miRNAs with reads of >=2 in all samples", x = "miRNAs", y = "log10Expression", caption = "Raw counts")
+  
+pm357_10 %>% 
+  rownames_to_column(var = "Sample") %>% 
+  mutate(Cells = factor(c("Endothelial", "Trophoblast", "Stromal", "Hofbauer", "Villi"), levels = c( "Trophoblast", "Stromal", "Endothelial", "Hofbauer", "Villi"))) %>% 
+  dplyr::select(Sample, Cells, everything()) %>% 
+  pivot_longer(cols = 3:296, names_to = "miRNA", values_to = "Reads") %>% 
+  ggplot(aes(x = miRNA, y = Reads, colour = Cells)) +
+  geom_point(size = 2) +
+  scale_colour_manual(values = colpal$Cell_type) +
+  #coord_cartesian(y = c(0,10000)) +
+  my_theme +
+  theme(axis.text.x = element_blank(), legend.position = "bottom") +
+  labs(title = "Expression of miRNAs for PM367 10ng", subtitle = "Samples were filtered for miRNAs with reads of >=2 in all samples", x = "miRNAs", y = "log10Expression", caption = "Raw counts")
+ 
+
+pm357_10 %>% 
+  rownames_to_column(var = "Sample") %>% 
+  mutate(Cells = factor(c("Endothelial", "Trophoblast", "Stromal", "Hofbauer", "Villi"), levels = c( "Trophoblast", "Stromal", "Endothelial", "Hofbauer", "Villi"))) %>% 
+  dplyr::select(Sample, Cells, everything()) %>% 
+  pivot_longer(cols = 3:296, names_to = "miRNA", values_to = "Reads") %>% 
+  ggplot(aes(x = miRNA, y = log10(Reads))) +
+  geom_boxplot() +
+ # scale_colour_manual(values = colpal$Cell_type) +
+  my_theme +
+  theme(axis.text.x = element_blank(), legend.position = "bottom") +
+  labs(title = "Expression of miRNAs for PM367 10ng", subtitle = "Samples were filtered for miRNAs with reads of >=2 in all samples", x = "miRNAs", y = "log10Expression", caption = "Raw counts")
+
+pm357_10 %>% 
+  rownames_to_column(var = "Sample") %>% 
+  mutate(Cells = factor(c("Endothelial", "Trophoblast", "Stromal", "Hofbauer", "Villi"), levels = c( "Trophoblast", "Stromal", "Endothelial", "Hofbauer", "Villi"))) %>% 
+  dplyr::select(Sample, Cells, everything()) %>% 
+  pivot_longer(cols = 3:296, names_to = "miRNA", values_to = "Reads") %>% 
+  ggplot(aes(x = miRNA, y = Reads)) +
+  geom_boxplot() +
+ # scale_colour_manual(values = colpal$Cell_type) +
+  coord_cartesian(y = c(0,10000)) +
+  my_theme +
+  theme(axis.text.x = element_blank(), legend.position = "bottom") +
+  labs(title = "Expression of miRNAs for PM367 10ng", subtitle = "Samples were filtered for miRNAs with reads of >=2 in all samples", x = "miRNAs", y = "log10Expression", caption = "Raw counts")
+```
+
+
+#### 2.7 Comparison of absolute read counts between titrations  
+
+```{r cs titration reads comparison, fig.width = 12}
+
+cs_conc <- pDat_cs %>% 
+  filter(Titrated == "yes")
+
+cs_conc_mirs <- cs_mirs %>% 
+  dplyr::select(which(names(eDat) %in% cs_conc$Sample))
+names(cs_conc_mirs)
+
+cs_conc_mirs <- cs_conc_mirs %>% 
+  filter_all(all_vars(. >= 2)) #692
+
+cs_conc_mirs <- as.data.frame(t(cs_conc_mirs))
+
+cs_conc <- cs_conc[c(1,2,4,6,17:20)]
+
+cs_conc_mirs <- cs_conc_mirs %>% 
+  rownames_to_column("Sample") %>% 
+  inner_join(cs_conc, by = "Sample")
+
+cs_conc_mirs <- cs_conc_mirs %>% 
+  dplyr::select(Sample, RobLab_ID, Case_ID, Titration, Trimester, Sex, Sample_type, Cell_type, everything())  
+
+cs_conc_mirs %>% 
+  pivot_longer(cols = -c(1:8), names_to = "miRNA", values_to = "Reads") %>% 
+  ggplot(aes(x = miRNA, y = log10(Reads), colour = Titration)) +
+  geom_point(size = 1) +
+  scale_colour_manual(values = colpal$Conc) +
+ # scale_y_continuous(breaks=seq(0, 20, 5)) +
+  my_theme +
+  theme(axis.text.x = element_blank(), legend.position = "bottom") +
+  facet_wrap(~RobLab_ID) +
+  labs(title = "Expression of miRNAs for all titrated samples", subtitle = "Samples were filtered for miRNAs with reads of >=10 in all samples (692 total miRNAs)", x = "miRNAs", y = "log10Expression", caption = "Raw counts")
+
+
+#plotting the difference in read counts between 10 and 50
+cs_conc_diff <- cs_conc_mirs %>% 
+  split(f = as.factor(.$RobLab_ID))
+
+cs_conc_diff <- map(cs_conc_diff, function(x) x %>% 
+                      rownames_to_column(var = "ID") %>% 
+                      mutate(Conc = c("Conc_10", "Conc_50")) %>% 
+                      column_to_rownames(var = "Conc") %>% 
+                      dplyr::select(-c(1:9)))
+
+cs_conc_diff <- map(cs_conc_diff, function(x) x %>% 
+                      as.data.frame %>% 
+                      t())
+
+cs_conc_diff <- map(cs_conc_diff, function(x) x %>% 
+                      as.data.frame() %>% # VERY IMPORTANT
+                      mutate(diff = Conc_50 - Conc_10))
+
+#bind rows in a list while adding a separate column with the name of each list element to distinguish the separate dfs
+cs_conc_diff <- dplyr::bind_rows(cs_conc_diff, .id = "RobLab_ID")
+
+cs_conc_diff %>% 
+  mutate(Case_ID = str_sub(RobLab_ID, 1, 5)) %>% 
+  ggplot(aes(x = RobLab_ID, y = diff)) +
+  geom_boxplot(colour = "slate gray") +
+  geom_jitter(shape = 16, position = position_jitter(0.2), colour = "dark gray", alpha = 0.6) +
+  scale_y_continuous(labels = comma_format(), expand = expansion(mult = c(0, .09))) +
+ # coord_cartesian(y = c(-900000, 900000)) +
+  my_theme +
+  facet_wrap(~Case_ID, scales = "free") +
+  labs(title = "Difference between 50ng and 10ng samples", subtitle = "Absolute Read Counts for miRNAs with >= 10 reads in all samples (692 total miRNAs)\nDifference = 50 -10 ", x = "Sample", y = "Difference in Read Counts", caption = "Raw counts")
+
+```
+
+It looks like the majority of differences are ranging from -50,000 and 50,000 
+
+```{r cs titration reads diff, fig.width = 12}
+
+cs_conc_diff %>% 
+  mutate(Case_ID = str_sub(RobLab_ID, 1, 5)) %>% 
+  ggplot(aes(x = RobLab_ID, y = diff)) +
+  geom_boxplot(colour = "slate gray") +
+  geom_jitter(shape = 16, position = position_jitter(0.2), colour = "dark gray", alpha = 0.6) +
+  scale_y_continuous(labels = comma_format(), expand = expansion(mult = c(0, .09))) +
+  coord_cartesian(y = c(-50000, 50000)) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1)) +
+  facet_wrap(~Case_ID, scales = "free") +
+  labs(title = "Difference between 50ng and 10ng samples", subtitle = "Absolute Read Counts for miRNAs with >= 10 reads in all samples (692 total miRNAs)\nDifference = 50 -10 ", x = "Sample", y = "Difference in Read Counts", caption = "Raw counts")
+
+
+```
+
+
+***  
+
+### 3.0 PL290v and TCR-5-18  
+
+#### 3.1 Total Reads  
+
+```{r conc total reads, fig.width=9, echo=FALSE}
+
+#reads for conc
+reads <- colSums(eDat_conc)
+pDat_conc$Total_reads <- reads 
+
+order <- pDat_conc$Sample
+pDat_conc$Sample <- fct_relevel(pDat_conc$Sample, order)
+pDat_conc$Total_reads_chr <- formatC(pDat_conc$Total_reads, format="d", big.mark=",")
+
+
+
+pDat_conc %>% 
+  ggplot(aes(x = Sample, y = Total_reads, fill = Titration, group = Sample)) +
+  geom_bar(stat = "identity", width = 0.8) +
+  scale_fill_manual(values = colpal$Titration) +
+  labs(title = "\nTotal Reads for PL290 and TCR-5-18", x = "Sample", y = "Total Reads") +
+  facet_wrap(~Case_ID, scales = "free_x") +
+  scale_y_continuous(labels = comma_format()) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1)) 
+  
+pDat_conc %>% 
+  ggplot(aes(x = Sample, y = Total_reads, fill = Extraction, group = Sample)) +
+  geom_bar(stat = "identity", width = 0.8) +
+  scale_fill_manual(values = colpal$Extraction) +
+  labs(title = "\nTotal Reads for PL290 and TCR-5-18", x = "Sample", y = "Total Reads") +
+  facet_wrap(~Case_ID, scales = "free_x") +
+  scale_y_continuous(labels = comma_format()) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1)) 
+
+
+pDat_conc %>% 
+  filter(Titration == "50") %>% 
+  ggplot(aes(x = Sample, y = Total_reads, fill = Extraction, colour = GSC_Batch, group = Sample)) +
+  geom_bar(stat = "identity", width = 0.8) +
+  geom_text(aes(label = Total_reads_chr), colour = "#333333", vjust = -1) +
+  scale_fill_manual(values = colpal$Extraction) +
+  scale_colour_manual(values = c("black", "white")) +
+  labs(title = "\nTotal Reads for PL290 and TCR-5-18", subtitle = "\nSamples at a concentration of 50ng/ul", x = "Sample", y = "Total Reads") +
+  facet_wrap(~Case_ID, scales = "free_x") +
+  scale_y_continuous(labels = comma_format(), expand = expansion(mult = c(0, .09))) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1)) 
+  
+```  
+
+***  
+
+#### 3.2 Species Filtering   
+
+I'm going to now count the number of miRNA species for each sample which have:  
+
+- At least 1 read count for a species  
+- At least 2 read counts for a species  
+- At at least 10 read counts for a species 
+
+
+```{r conc species, fig.width=9, echo=FALSE}
+
+miRNA_species_1 <- colSums(eDat_conc != 0)
+
+miRNA_species_1 <- as.data.frame(miRNA_species_1)
+miRNA_species_1$miRNA_species_10 <- colSums(eDat_conc >= 10) #all miRNA species with at least 10 counts
+
+colnames(miRNA_species_1)[1] <- "miRNA_species_1"
+
+miRNA_species <- miRNA_species_1
+rm(miRNA_species_1)
+
+miRNA_species <- miRNA_species %>% 
+  rownames_to_column(var = "Sample")
+
+pDat_conc <- pDat_conc %>% 
+  inner_join(miRNA_species, by = "Sample")
+
+pDat_conc$miRNA_species_2 <-  colSums(eDat_conc >= 2)
+
+
+order <- pDat_conc$Sample
+pDat_conc$Sample <- fct_relevel(pDat_conc$Sample, order)
+
+pDat_conc %>%
+  pivot_longer(cols = c(miRNA_species_1, miRNA_species_2, miRNA_species_10), names_to = "filtering_criteria", values_to = "no_of_species") %>%
+  mutate(filtering_criteria = fct_relevel(filtering_criteria, c("miRNA_species_1", "miRNA_species_2", "miRNA_species_10"))) %>%
+  ggplot(aes(x = Sample, y = no_of_species, fill = filtering_criteria, group = Sample)) + 
+  geom_bar(stat = "identity", position = position_dodge2(preserve = "single"), width = 0.8) + 
+ # geom_text(aes(label = no_of_species), colour = "#333333", vjust = -0.8, position = position_dodge(0.8)) + 
+  scale_fill_manual(values = c("#003f5c","#ffa600", "#488f31")) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.09))) + 
+  facet_wrap(~Case_ID, scales = "free_x") +
+  my_theme +
+  theme(legend.position = "bottom") + 
+  theme(axis.text.x = element_text(angle = 35, hjust = 1)) +
+  labs(title = "\nmiRNA species", subtitle = "\nBy filtering criteria (Total miRNAs = 2887)", x = "Filtering Criteria", y = "No. of Species", fill = "Filtering Critria")
+
+```
+
+```{r, fig.width=9, fig.height = 8, echo=FALSE}
+
+pDat_conc %>%
+  pivot_longer(cols = c(miRNA_species_1, miRNA_species_2, miRNA_species_10), names_to = "filtering_criteria", values_to = "no_of_species") %>%
+  mutate(filtering_criteria = fct_relevel(filtering_criteria, c("miRNA_species_1", "miRNA_species_2", "miRNA_species_10"))) %>%
+  ggplot(aes(x = Sample, y = no_of_species, fill = filtering_criteria, group = Sample)) + 
+  geom_bar(stat = "identity", position = position_dodge2(preserve = "single"), width = 0.8) + 
+ # geom_text(aes(label = no_of_species), colour = "#333333", vjust = -0.8, position = position_dodge(0.8)) + 
+  scale_fill_manual(values = c("#003f5c","#ffa600", "#488f31")) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.09))) + 
+  facet_wrap(~Titration, scales = "free_x", ncol = 3) +
+  my_theme +
+  theme(legend.position = "bottom") + 
+  theme(axis.text.x = element_text(angle = 35, hjust = 1)) +
+  labs(title = "\nmiRNA species", subtitle = "\nBy filtering criteria (Total miRNAs = 2887)", x = "Filtering Criteria", y = "No. of Species", fill = "Filtering Critria")
+
+```
+
+```{r, fig.width=9, echo=FALSE}
+pDat_conc %>%
+  filter(Titration == 50) %>% 
+  pivot_longer(cols = c(miRNA_species_1, miRNA_species_2, miRNA_species_10), names_to = "filtering_criteria", values_to = "no_of_species") %>%
+  mutate(filtering_criteria = fct_relevel(filtering_criteria, c("miRNA_species_1", "miRNA_species_2", "miRNA_species_10"))) %>%
+  ggplot(aes(x = Sample, y = no_of_species, fill = filtering_criteria, group = Sample)) + 
+  geom_bar(stat = "identity", position = position_dodge2(preserve = "single"), width = 0.8) + 
+ # geom_text(aes(label = no_of_species), colour = "#333333", vjust = -0.8, position = position_dodge(0.8)) + 
+  scale_fill_manual(values = c("#003f5c","#ffa600", "#488f31")) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.09))) + 
+  facet_wrap(~Case_ID, scales = "free_x") +
+  my_theme +
+  theme(legend.position = "bottom") + 
+  theme(axis.text.x = element_text(angle = 35, hjust = 1)) +
+  labs(title = "\nmiRNA species", subtitle = "\nOnly for 50ng/ul (Total miRNAs = 2887)", x = "Filtering Criteria", y = "No. of Species", fill = "Filtering Critria")
+
+
+```  
+
+```{r conc species and filtering, fig.width = 10, echo=FALSE, eval=FALSE, include=FALSE}
+
+
+# 
+# - at least 2 reads for each species in each sample (as the minimum viable read count)  
+# - at least 10 reads for each species in each sample
+
+
+#getting total number of species aligned
+dim_all <- dim(eDat_conc)
+dim_all <- as.data.frame(unlist(dim_all))
+
+#minimum read count of 2 in all samples
+species_min2 <- eDat_conc %>% 
+  filter_all(all_vars(. >= 2))
+dim_min2 <- dim(species_min2)
+dim_min2 <- as.data.frame(unlist(dim_min2))
+
+#minimum read count of 10 in all samples
+species_min10 <- eDat_conc %>% 
+  filter_all(all_vars(. >= 10))
+dim_min10 <- dim(species_min10)
+dim_min10 <- as.data.frame(unlist(dim_min10))
+
+#making a df of all species, and species after filtering
+#making a df of all species, and species after filtering
+dim_species <- cbind(dim_all, dim_min2, dim_min10)
+dim_species$v <- c("rows", "columns")
+dim_species <- dim_species %>% 
+  filter(v == "rows")
+colnames(dim_species)[1:3] <- c("all_species", "species_min2", "species_min10")
+row.names(dim_species) <- sncRNA_order
+
+dim_species_conc <- dim_species 
+
+dim_species_conc <- dim_species_conc %>% 
+  dplyr::select(-v) %>% 
+  mutate(species_dropped_min2 = all_species - species_min2,
+         species_dropped_min10 = all_species - species_min10,
+         perc_drop_min2 = (species_dropped_min2/all_species)*100,
+         perc_drop_min10 = (species_dropped_min10/all_species)*100,
+         perc_drop_min2 = round(perc_drop_min2, digits =1),
+         perc_drop_min10 = round(perc_drop_min10, digits =1)) %>% 
+         dplyr::select(all_species, species_min2, species_dropped_min2, perc_drop_min2, species_min10, species_dropped_min10, perc_drop_min10)
+
+#install.packages("gtsummary")
+# library(gtsummary)
+# dim_species %>% 
+#  tbl_summary()
+
+dim_species_conc %>% 
+  kable()
+
+dim_species_conc %>% 
+  dplyr::select(all_species, species_min2, species_min10) %>% 
+  rownames_to_column(var = "sncRNA") %>% 
+  pivot_longer(cols = 2:4, names_to = "filtering_critria", values_to = "no_of_species") %>% 
+  mutate(filtering_critria = fct_relevel(filtering_critria, c("all_species", "species_min2", "species_min10"))) %>% 
+  ggplot(aes(x = sncRNA, y = no_of_species, fill = filtering_critria)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.8) +
+  geom_text(aes(label = no_of_species), colour = "#333333", vjust = -0.8, position = position_dodge(0.8)) +
+  scale_fill_manual(values = c("#003f5c", "#ffa600", "#488f31")) +
+  scale_y_continuous(expand = expansion(mult = c(0, .09))) +
+  my_theme +
+  theme(legend.position = "bottom") +
+  labs(title = "\nTotal sncRNA species", subtitle = "\nCell-sorted samples only\n", x = "sncRNA", y = "No. of Species", fill = "Filtering Critria")
+
+
+
+
+f1 <- function(x) {
+    list(dim = dim(x))
+}
+
+PM_list <- all[c(1,2,31,29,32,30,20)]
+
+PM_list <- PM_list %>%
+ split(f = as.factor(.$sncRNA))
+
+dim_all <- lapply(PM_list, f1)
+dim_all <- as.data.frame(unlist(dim_all))
+
+
+#only keeping seqs with read count of >= 2
+total_species <- map(PM_list, function(x) x %>% 
+                       dplyr::select(-sncRNA) %>% 
+                       filter_all(all_vars(. >= 2))) 
+
+dim_species <- lapply(total_species, f1)
+dim_species <- as.data.frame(unlist(dim_species))
+
+
+#only keeping seqs with read count of >= 10
+species_min10 <- map(PM_list, function(x) x %>% 
+                       dplyr::select(-sncRNA) %>% 
+                       filter_all(all_vars(. >= 10))) 
+
+species_min10 <- lapply(species_min10, f1)
+species_min10 <- as.data.frame(unlist(species_min10))
+
+
+#making a df of all species, and species after filtering
+dim_species <- cbind(dim_all, dim_species, species_min10)
+dim_species$v <- c("rows", "columns")
+dim_species <- dim_species %>% 
+  filter(v == "rows")
+colnames(dim_species)[1:3] <- c("all_species", "species_min2", "species_min10")
+row.names(dim_species) <- sncRNA_order
+
+dim_species <- dim_species %>% 
+  dplyr::select(-v) %>% 
+  mutate(species_dropped_min2 = all_species - species_min2,
+         species_dropped_min10 = all_species - species_min10,
+         perc_drop_min2 = (species_dropped_min2/all_species)*100,
+         perc_drop_min10 = (species_dropped_min10/all_species)*100,
+         perc_drop_min2 = round(perc_drop_min2, digits =1),
+         perc_drop_min10 = round(perc_drop_min10, digits =1)) %>% 
+         dplyr::select(all_species, species_min2, species_dropped_min2, perc_drop_min2, species_min10, species_dropped_min10, perc_drop_min10)
+
+#install.packages("gtsummary")
+# library(gtsummary)
+# dim_species %>% 
+#  tbl_summary()
+
+dim_species %>% 
+  kable()
+
+dim_species %>% 
+   pivot_longer(cols = 1:3, names_to = "filtering_critria", values_to = "no_of_species") %>% 
+  mutate(filtering_critria = fct_relevel(filtering_critria, c("all_species", "species_min2", "species_min10"))) %>% 
+  ggplot(aes(x = filtering_critria, y = no_of_species, fill = filtering_critria)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.4) +
+  geom_text(aes(label = no_of_species), colour = "#333333", vjust = -0.8, position = position_dodge(0.8)) +
+  scale_fill_manual(values = c("#003f5c", "#ffa600", "#488f31")) +
+  scale_y_continuous(expand = expansion(mult = c(0, .09))) +
+  my_theme +
+  theme(legend.position = "bottom") +
+  labs(title = "\nTotal sncRNA species", subtitle = "\nPM384 / PM385", x = "sncRNA", y = "No. of Species", fill = "Filtering Critria")
+
+
+```
+
+***  
+
+#### 3.3 miRNA species vs. Total miRNA Reads  {.tabset}  
+
+
+##### 1. Total miRNA species with >=1 read  
+
+
+```{r total reads species plots 1, fig.width = 10, echo=FALSE}
+
+pDat_conc %>% 
+  filter(GSC_Batch == "2") %>% 
+  ggplot(aes(x = Total_reads, y = miRNA_species_1, colour = Titration)) +
+  geom_point(size = 3, alpha = 0.8) +
+  scale_colour_manual(values = colpal$Titration) +
+  scale_y_continuous(breaks=seq(0, 1500, 100)) +
+  scale_x_continuous(labels = comma_format(), expand = expansion(mult = c(0, .09)), breaks=seq(0, 2500000, 500000)) +
+  coord_cartesian(x = c(0, 2500000), y = c(0,1500)) +
+  facet_grid(~Case_ID) +
+  labs(title = "\nmiRNA Species vs Total miRNA Reads: Cell-Sorted Batch 2 Samples only", subtitle = "\nmiRNA Species with at least 1 read (Total miRNAs aligned: 2887)\n", x = "\nTotal miRNA Reads", y = "miRNA Species", Colour = "Cell Type", Shape = "Titration") + 
+  my_theme +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1)) +
+  theme(legend.position = "bottom", legend.box = "vertical", legend.margin = margin()) +
+  theme(panel.spacing.x = unit(2, "lines"))
+
+```  
+
+
+
+```{r, fig.width = 10, echo=FALSE}
+
+pDat_conc %>% 
+  filter(Titration == "50") %>% 
+  ggplot(aes(x = Total_reads, y = miRNA_species_1, colour = Sample, shape = Extraction)) +
+  geom_point(size = 3, alpha = 0.8) +
+  # scale_colour_manual(values = colpal$Titration) +
+  scale_y_continuous(breaks=seq(0, 1500, 100)) +
+  scale_x_continuous(labels = comma_format(), expand = expansion(mult = c(0, .09))) +
+  coord_cartesian(x = c(0, 18000000), y = c(0,1500)) +
+   facet_grid(~Case_ID) +
+  labs(title = "\nmiRNA Species vs Total miRNA Reads: 50ng/ul Samples only", subtitle = "\nmiRNA Species with at least 1 read (Total miRNAs aligned: 2887)\n", x = "\nTotal miRNA Reads", y = "miRNA Species", Colour = "Cell Type", Shape = "Extraction") + 
+  my_theme +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1)) +
+  theme(legend.position = "bottom", legend.box = "vertical", legend.margin = margin()) +
+  theme(panel.spacing.x = unit(2, "lines"))
+
+```
+
+
+***  
+
+##### 2. Total miRNA species with >=2 reads  
+
+```{r total reads species plots 2, fig.width = 10, echo=FALSE}
+
+pDat_conc %>% 
+  filter(GSC_Batch == "2") %>% 
+  ggplot(aes(x = Total_reads, y = miRNA_species_2, colour = Titration)) +
+  geom_point(size = 3, alpha = 0.8) +
+  scale_colour_manual(values = colpal$Titration) +
+  scale_y_continuous(breaks=seq(0, 1500, 100)) +
+  scale_x_continuous(labels = comma_format(), expand = expansion(mult = c(0, .09)), breaks=seq(0, 2500000, 500000)) +
+  coord_cartesian(x = c(0, 2500000), y = c(0,1500)) +
+  facet_grid(~Case_ID) +
+  labs(title = "\nmiRNA Species vs Total miRNA Reads: Cell-Sorted Samples only", subtitle = "\nmiRNA Species with at least 2 reads (Total miRNAs aligned: 2887)\n", x = "\nTotal miRNA Reads", y = "miRNA Species", Colour = "Cell Type", Shape = "Titration") + 
+  my_theme +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1)) +
+  theme(legend.position = "bottom", legend.box = "vertical", legend.margin = margin()) +
+  theme(panel.spacing.x = unit(2, "lines"))
+
+```  
+
+
+```{r, fig.width = 10, echo=FALSE}
+
+pDat_conc %>% 
+  filter(Titration == "50") %>% 
+  ggplot(aes(x = Total_reads, y = miRNA_species_2, colour = Sample, shape = Extraction)) +
+  geom_point(size = 3, alpha = 0.8) +
+  # scale_colour_manual(values = colpal$Titration) +
+  scale_y_continuous(breaks=seq(0, 1500, 100)) +
+  scale_x_continuous(labels = comma_format(), expand = expansion(mult = c(0, .09))) +
+  coord_cartesian(x = c(0, 18000000), y = c(0,1500)) +
+  facet_grid(~Case_ID) +
+  labs(title = "\nmiRNA Species vs Total miRNA Reads: 50ng/ul Samples only", subtitle = "\nmiRNA Species with at least 2 reads (Total miRNAs aligned: 2887)\n", x = "\nTotal miRNA Reads", y = "miRNA Species", Colour = "Cell Type", Shape = "Extraction") + 
+  my_theme +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1)) +
+  theme(legend.position = "bottom", legend.box = "vertical", legend.margin = margin()) +
+  theme(panel.spacing.x = unit(2, "lines"))
+
+```
+
+***  
+
+##### 3. Total miRNA species with >=10 reads  
+
+```{r total reads species plots 3, fig.width = 10, echo=FALSE}
+
+pDat_conc %>% 
+  filter(GSC_Batch == "2") %>% 
+  ggplot(aes(x = Total_reads, y = miRNA_species_10, colour = Titration)) +
+  geom_point(size = 3, alpha = 0.8) +
+  scale_colour_manual(values = colpal$Titration) +
+  scale_y_continuous(breaks=seq(0, 1500, 100)) +
+  scale_x_continuous(labels = comma_format(), expand = expansion(mult = c(0, .09)), breaks=seq(0, 2500000, 500000)) +
+  coord_cartesian(x = c(0, 2500000), y = c(0,1500)) +
+  facet_grid(~Case_ID) +
+  labs(title = "\nmiRNA Species vs Total miRNA Reads: Cell-Sorted Samples only", subtitle = "\nmiRNA Species with at least 10 reads (Total miRNAs aligned: 2887)\n", x = "\nTotal miRNA Reads", y = "miRNA Species", Colour = "Cell Type", Shape = "Titration") + 
+  my_theme +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1)) +
+  theme(legend.position = "bottom", legend.box = "vertical", legend.margin = margin()) +
+  theme(panel.spacing.x = unit(2, "lines"))
+
+
+```  
+
+```{r, fig.width = 10, echo=FALSE}
+
+pDat_conc %>% 
+  filter(Titration == "50") %>% 
+  ggplot(aes(x = Total_reads, y = miRNA_species_10, colour = Sample, shape = Extraction)) +
+  geom_point(size = 3, alpha = 0.8) +
+  # scale_colour_manual(values = colpal$Titration) +
+  scale_y_continuous(breaks=seq(0, 1500, 100)) +
+  scale_x_continuous(labels = comma_format(), expand = expansion(mult = c(0, .09))) +
+  coord_cartesian(x = c(0, 18000000), y = c(0,1500)) +
+  facet_grid(~Case_ID) +
+  labs(title = "\nmiRNA Species vs Total miRNA Reads: 50ng/ul Samples only", subtitle = "\nmiRNA Species with at least 10 reads (Total miRNAs aligned: 2887)\n", x = "\nTotal miRNA Reads", y = "miRNA Species", Colour = "Cell Type", Shape = "Extraction") + 
+  my_theme +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1)) +
+  theme(legend.position = "bottom", legend.box = "vertical", legend.margin = margin()) +
+  theme(panel.spacing.x = unit(2, "lines"))
+
+```
+
+***  
+
+
+
+
+### 4.0 PM384 and PM385  
+
+#### 4.1 Total Reads 
+
+```{r PMs total reads, fig.width=10, echo=FALSE}
+
+library(scales)
+
+order <- pDat_PMs$Sample
+pDat_PMs$Sample <- fct_relevel(pDat_PMs$Sample, order)
+pDat_PMs$Total_reads_chr <- formatC(pDat_PMs$Total_reads, format="d", big.mark=",")
+
+pDat_PMs %>% 
+  ggplot(aes(x = Sample, y = Total_reads, fill = DNased, group = Sample)) +
+  geom_col(width = 0.6) +
+  geom_text(aes(label = Total_reads_chr), colour = "#333333", vjust = -1.4) +
+  scale_fill_manual(values = colpal$DNased) +
+  labs(title = "\nTotal Reads for PM384 and PM385\n", x = "Sample", y = "Total Reads") +
+  scale_y_continuous(labels = comma_format(), expand = expansion(mult = c(0, .09))) +
+  facet_grid(~Case_ID, scales = "free_x", space = "free") +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1)) 
+
+pDat_PMs %>% 
+  dplyr::select(RobLab_ID, Sample, Case_ID, Titration, Total_reads, Post_min17_trim_retained, Post_min17_trim_dropped) %>% 
+  pivot_longer(cols = 5:7, names_to = "filter", values_to = "reads") %>% 
+  mutate(filter = fct_relevel(filter, c("Total_reads", "Post_min17_trim_retained", "Post_min17_trim_dropped"))) %>% 
+  ggplot(aes(x = Sample, y = reads, colour = filter, shape = as.factor(Titration))) +
+  geom_point(size = 2.5) +
+  scale_colour_manual(values = c("#0075ab", "#5ab33d", "#f95d6a")) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1)) +
+  theme(legend.position = "bottom", legend.box="vertical", legend.margin=margin()) +
+  facet_wrap(~Case_ID, scales = "free") +
+  scale_y_continuous(labels = comma_format(), expand = expansion(mult = c(0, .09))) +
+  labs(title = "\nReads pre and post trimming", x = "Sample", y = "No. of reads", colour = "Filter", shape = "Titration")
+
+
+pDat_PMs %>% 
+  dplyr::select(RobLab_ID, Sample, Case_ID, Titration, Total_reads, Post_min17_trim_retained, Post_min17_trim_dropped) %>% 
+  pivot_longer(cols = 6:7, names_to = "filter", values_to = "reads") %>% 
+  mutate(filter = fct_relevel(filter, c("Total_reads", "Post_min17_trim_retained", "Post_min17_trim_dropped"))) %>% 
+  ggplot(aes(x = Sample, y = reads, fill = filter)) +
+  geom_col(width = 0.6) +
+  geom_text(aes(label = Total_reads), colour = "white", vjust = -1, data = . %>% filter(filter == "Post_min17_trim_dropped")) +
+  scale_fill_manual(values = c("#488f31", "#ffa600")) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1)) +
+  theme(legend.position = "bottom", legend.box="vertical", legend.margin=margin()) +
+  facet_grid(~Case_ID, scales = "free", space = "free") +
+  scale_y_continuous(labels = comma_format(), expand = expansion(mult = c(0, .09))) +
+  labs(title = "\nReads pre and post trimming", subtitle = "\nFloating number indicate total reads retained", x = "Sample", y = "No. of reads", colour = "Filter")
+
+pDat_PMs %>% 
+  dplyr::select(RobLab_ID, Sample, Case_ID, Titration, Total_Mapped_on_Precursor_or_miRNA, Total_Unmapped) %>% 
+  pivot_longer(cols = 5:6, names_to = "Mapped", values_to = "Percentage") %>% 
+  mutate(Mapped = fct_relevel(Mapped, c("Total_Mapped_on_Precursor_or_miRNA", "Total_Unmapped")),
+         Percentage = as.numeric(Percentage),
+         Percentage = round(Percentage, digits = 1)) %>% 
+  ggplot(aes(x = Sample, y = Percentage, fill = Mapped)) +
+  geom_bar(stat = "identity", width = 0.4) +
+  scale_fill_manual(values = c("#5ab33d", "#f95d6a")) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1)) +
+  theme(legend.position = "bottom", legend.box="vertical", legend.margin=margin()) +
+  facet_grid(~Case_ID, scales = "free", space = "free") +
+  coord_cartesian(y = c(0, 100)) +
+  scale_y_continuous(breaks=seq(0, 100, 10), expand =c(0,0)) +
+  labs(title = "\nMapped vs. Unmapped Reads", x = "Sample", y = "Percentage", colour = "Percentage")
+
+
+```
+  
+***
+
+#### 4.2 Species Filtering   
+
+I'm going to now count the number of miRNA species for each sample which have:  
+
+- At least 1 read count for a species  
+- At least 2 read counts for a species  
+- At at least 10 read counts for a species 
+
+```{r PM species, fig.width=9, echo=FALSE}
+
+# 
+# order <- pDat_PMs$Sample
+# pDat_PMs$Sample <- fct_relevel(pDat_PMs$Sample, order)
+
+pDat_PMs %>%
+  pivot_longer(cols = c(miRNA_species_1, miRNA_species_2, miRNA_species_10), names_to = "filtering_criteria", values_to = "no_of_species") %>%
+  mutate(filtering_criteria = fct_relevel(filtering_criteria, c("miRNA_species_1", "miRNA_species_2", "miRNA_species_10"))) %>%
+  ggplot(aes(x = Sample, y = no_of_species, fill = filtering_criteria, group = Sample)) + 
+  geom_bar(stat = "identity", position = position_dodge2(preserve = "single"), width = 0.8) + 
+ # geom_text(aes(label = no_of_species), colour = "#333333", vjust = -0.8, position = position_dodge(0.8)) + 
+  scale_fill_manual(values = c("#003f5c","#ffa600", "#488f31")) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.09))) + 
+  facet_grid(~Case_ID, scales = "free_x", space = "free") +
+  my_theme +
+  theme(legend.position = "bottom") + 
+  theme(axis.text.x = element_text(angle = 35, hjust = 1)) +
+  labs(title = "\nmiRNA species", subtitle = "\nBy filtering criteria (Total miRNAs = 2887)", x = "Filtering Criteria", y = "No. of Species", fill = "Filtering Critria")
+
+
+```
+
+***  
+
+#### 4.3 miRNA species vs. Total miRNA Reads  {.tabset}  
+
+1. Total miRNA Reads vs Percentage of Reads Mapped  
+
+```{r pm total mapped vs reads plots, fig.width = 11, fig.length = 8, echo=FALSE, error=FALSE, message=FALSE, warning=FALSE}
+
+pDat_PMs$Preservation = c("RNAlater", "RNAlater", "RNAlater", "RNAlater", "SNAP")
+
+pDat_PMs %>% 
+  ggplot(aes(x = miRNA, y = Total_Mapped_on_Precursor_or_miRNA, colour = DNased, shape = Preservation)) +
+  geom_point(size = 3, alpha = 0.8) +
+  scale_colour_manual(values = colpal$DNased) +
+  scale_y_continuous(breaks=seq(0, 100, 10)) +
+  scale_x_continuous(labels = comma_format(), expand = expansion(mult = c(0, .09))) +
+  coord_cartesian(x = c(0, 17000000), y = c(0,100)) +
+  facet_wrap(~Case_ID, scales = "free_x") +
+  labs(title = "\nTotal miRNA Reads vs Percentage of Reads Mapped", subtitle = "\nCell Sorted samples only", x = "\nTotal miRNA Reads", y = "Percentage of Reads", Colour = "Cell Type", Shape = "Titration") + 
+  my_theme +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1)) 
+ theme(legend.position = "bottom", legend.box = "vertical", legend.margin = margin())
+
+```  
+
+***  
+
+##### 2. Total miRNA species with >=1 read  
+
+```{r PM total reads species plots 1, fig.width = 10, echo=FALSE}
+
+pDat_PMs %>% 
+  ggplot(aes(x = miRNA, y = miRNA_species_1, colour = DNased, shape = Preservation)) +
+  geom_point(size = 3, alpha = 0.8) +
+  scale_colour_manual(values = colpal$DNased) +
+  scale_y_continuous(breaks=seq(0, 1400, 100)) +
+  scale_x_continuous(labels = comma_format(), expand = expansion(mult = c(0, .09))) +
+  coord_cartesian(x = c(0, 17000000), y = c(0,1500)) +
+  facet_wrap(~Case_ID, scales = "free_x") +
+  labs(title = "\nmiRNA Species vs Total miRNA Reads: Cell-Sorted Samples only", subtitle = "\nmiRNA Species with at least 1 read (Total miRNAs aligned: 2887)\n", x = "\nTotal miRNA Reads", y = "miRNA Species", Colour = "Cell Type", Shape = "Titration") + 
+  my_theme +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1)) +
+  theme(legend.position = "bottom", legend.box = "vertical", legend.margin = margin()) 
+
+```  
+
+***  
+
+##### 3. Total miRNA species with >=2 reads  
+
+```{r PM total reads species plots 2, fig.width = 10, echo=FALSE}
+
+pDat_PMs %>% 
+  ggplot(aes(x = miRNA, y = miRNA_species_2, colour = DNased, shape = Preservation)) +
+  geom_point(size = 3, alpha = 0.8) +
+  scale_colour_manual(values = colpal$DNased) +
+  scale_y_continuous(breaks=seq(0, 1400, 100)) +
+  scale_x_continuous(labels = comma_format(), expand = expansion(mult = c(0, .09))) +
+  coord_cartesian(x = c(0, 17000000), y = c(0,1500)) +
+  facet_wrap(~Case_ID, scales = "free_x") +
+  labs(title = "\nmiRNA Species vs Total miRNA Reads: Cell-Sorted Samples only", subtitle = "\nmiRNA Species with at least 2 reads (Total miRNAs aligned: 2887)\n", x = "\nTotal miRNA Reads", y = "miRNA Species", Colour = "Cell Type", Shape = "Titration") + 
+  my_theme +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1)) +
+  theme(legend.position = "bottom", legend.box = "vertical", legend.margin = margin()) 
+
+```  
+
+***  
+
+##### 4. Total miRNA species with >=10 reads  
+
+```{r PM total reads species plots 3, fig.width = 10, echo=FALSE}
+
+pDat_PMs %>% 
+  ggplot(aes(x = miRNA, y = miRNA_species_10, colour = DNased, shape = Preservation)) +
+  geom_point(size = 3, alpha = 0.8) +
+  scale_colour_manual(values = colpal$DNased) +
+  scale_y_continuous(breaks=seq(0, 1400, 100)) +
+  scale_x_continuous(labels = comma_format(), expand = expansion(mult = c(0, .09))) +
+  coord_cartesian(x = c(0, 17000000), y = c(0,1500)) +
+  facet_wrap(~Case_ID, scales = "free_x") +
+  labs(title = "\nmiRNA Species vs Total miRNA Reads: Cell-Sorted Samples only", subtitle = "\nmiRNA Species with at least 10 reads (Total miRNAs aligned: 2887)\n", x = "\nTotal miRNA Reads", y = "miRNA Species", Colour = "Cell Type", Shape = "Titration") + 
+  my_theme +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1)) +
+  theme(legend.position = "bottom", legend.box = "vertical", legend.margin = margin()) 
+
+```
+
+***  
+
+### 5.0 Saving Data  
+
+```{r saving data, eval=FALSE}
+
+write_rds(eDat, file = here::here("Batch_3", "data", "processed", "eDat.RDS"))
+write_rds(pDat, file = here::here("Batch_3", "data", "processed", "pDat.RDS"))
+write_rds(mDat, file = here::here("Batch_3", "data", "processed", "mDat.RDS"))
+write_rds(all, file = here::here("Batch_3", "data", "processed", "all_sncRNA.RDS"))
+
+write_rds(eDat_conc, file = here::here("Batch_3", "data", "processed", "eDat_titrations.RDS"))
+write_rds(pDat_conc, file = here::here("Batch_3", "data", "processed", "pDat_titrations.RDS"))
+
+write_rds(eDat_PMs, file = here::here("Batch_3", "data", "processed", "eDat_PMs.RDS"))
+write_rds(pDat_PMs, file = here::here("Batch_3", "data", "processed", "pDat_PMs.RDS"))
+
+
+```
+
+
