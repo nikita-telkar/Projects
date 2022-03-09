@@ -1,5 +1,7 @@
-# Analysing DNA methylation & gene expression patterns in systemic lupus erythematosus (SLE)  
-## A project by the GINNS for STAT540
+# My project for UBC's [STAT540 Statistical Methods for High Dimensional Biology](http://stat540-ubc.github.io/) Course  
+
+## Analysing DNA methylation & gene expression patterns in systemic lupus erythematosus (SLE)  
+**A project by the GINNS for STAT540**  
 
 ***  
 
