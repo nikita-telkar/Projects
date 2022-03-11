@@ -8,5 +8,3 @@ Data: small-RNA specific sequencing
 [Check out my Shiny App showcasing the above!](https://robinsonlab.shinyapps.io/Placental_miRNome_Expression_Database/)  
 
 ***  
-
-1
