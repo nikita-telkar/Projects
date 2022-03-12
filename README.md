@@ -1,3 +1,3 @@
 ### Projects
 
-A few analysis scripts from my PhD projects. :rainbow:  
+A few analysis scripts from my projects :rainbow:  
