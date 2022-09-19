@@ -1,0 +1,1198 @@
+---
+title: "RNA-seq: Raw FASTQ to Read Counts Tutorial"
+author:
+   - name: Nikita Telkar                            
+     affiliation: <i> British Columbia Children’s Hospital Research Institute, Vancouver, Canada <br> British Columbia Cancer Research Centre, Vancouver, Canada </i>
+date: September 2022
+output: 
+  html_document: 
+    keep_md: yes 
+    toc: true  
+    toc_depth: 4
+    toc_float: 
+      collapsed: false 
+      smooth_scroll: true
+    theme: flatly  
+    highlight: haddock
+---
+
+
+
+***  
+
+**This tutorial walks through how to get a final gene expression matrix/data frame that contains the raw read/expression counts from raw RNA sequencing data**   
+
+<br>
+
+Raw RNA sequencing data is stored in files formatted with the suffix `.FASTQ` 
+
+If you used the `head` command in terminal followed by the name of your FASTQ file, you'll get an output that looks something like the below:  
+
+![from https://compgenomr.github.io/book/fasta-and-fastq-formats.html](https://raw.githubusercontent.com/nikita-telkar/PHB/main/static/fastq_raw.png)  
+
+> I'm going to use the low-input miRNA-specific primer/adapters used for the sequencing of my project samples as an example  
+
+The construct for my sequences look like:  
+
+5' HHHHHHHHCA-`miRNA`–*TGGAATTCTCGGGTGCCAAG***TCGACGTACGATCNNNNNNATCTCGTATGCCGTCTTCTGCTTG** 3’  
+
+1. UMI - 8pb HHHHHHHH  
+2. CA dinucleotide  
+3. `miRNA sequence: 17-25bp`  
+4. *Index Primer - 20 nt*  
+5. **Adapter - Variable length, depending upon the length of the miRNA**  
+
+***  
+
+## 1.0 Run sequence data through FASTQC  
+
+Check that:  
+
+1.  Phred Scores are above 20 for *per base sequence quality* for bases 11-31/35 for untrimmed FASTQ files or for bases 1-21/25  for Adapter/UMI/index primer trimmed FASTQ files.  
+2.  Nucleotide Content is distributed evenly for the the bases specified above  
+3.  Adapter content not presetnt in trimmed files  
+
+***
+
+## 2.0 Trim adapter + primers: via `cutadapt`  
+
+### 2.1 Activate [cutAdapt](https://cutadapt.readthedocs.io/en/stable/guide.html)  
+
+
+```bash
+
+#create new env to run cutadapt
+conda create --name cutadapt
+
+#activate env
+source activate cutadapt
+
+```
+
+
+### 2.2 Full Command  
+
+The below command uses all the required flags for trimming our UMI + adapter + index primer. To go through each flag on it's own, scroll down to [section 2.3](#2.3) and [section 2.4](#2.4)
+
+
+```bash
+
+#command explanation
+cutadapt --cut No.of.nucleotides(positive_integer_for_from_start_of_seq) -a adapterEQUENCE -o output.fastq input.fastq
+
+#for one file
+cutadapt --cut 10 -a TGGAATTCTCGGGTGCCAAG --cores=8 -o trimmed_M20072_5_3_prime.fastq M20072_1_75bp_4_lanes.merge_chastity_passed.fastq.gz 
+
+#for multiple files
+for file in *.fastq.gz; do cutadapt --cut 10 -a TGGAATTCTCGGGTGCCAAG --cores=8 -o trimmed/trimmed_Adapter_${file} ${file}; done
+
+---
+
+
+# NOTE: EMPTY SEQS WITH 0 LENGTH ARE KEPT BY DEFAULT. Read further on how to to trim by sequence length using Trimmomatic
+
+This is cutadapt 1.18 with Python 3.7.11
+Command line parameters: --cut 10 -a TGGAATTCTCGGGTGCCAAG --cores=8 -o trimmed_M20072_5_3_prime.fastq M20072_1_75bp_4_lanes.merge_chastity_passed.fastq.gz
+Processing reads on 8 cores in single-end mode ...
+Finished in 40.52 s (2 us/read; 25.62 M reads/minute).
+
+=== Summary ===
+
+Total reads processed:              17,299,822
+Reads with adapters:                16,894,173 (97.7%)
+Reads written (passing filters):    17,299,822 (100.0%)
+
+Total basepairs processed: 1,297,486,650 bp
+Total written (filtered):    294,338,511 bp (22.7%)
+
+=== Adapter 1 ===
+
+Sequence: TGGAATTCTCGGGTGCCAAG; Type: regular 3'; Length: 20; Trimmed: 16894173 times.
+
+No. of allowed errors:
+0-9 bp: 0; 10-19 bp: 1; 20 bp: 2
+
+Bases preceding removed adapters:
+  A: 16.9%
+  C: 26.4%
+  G: 28.1%
+  T: 28.4%
+  none/other: 0.2%
+
+Overview of removed sequences
+length  count   expect  max.err error counts
+3       6034    270309.7        0       6034
+4       976     67577.4 0       976
+5       346     16894.4 0       346
+6       330     4223.6  0       330
+7       286     1055.9  0       286
+8       247     264.0   0       247
+9       298     66.0    0       296 2
+10      254     16.5    1       251 3
+11      326     4.1     1       324 2
+12      407     1.0     1       398 9
+13      399     0.3     1       387 12
+14      772     0.1     1       749 23
+15      657     0.0     1       643 14
+16      470     0.0     1       458 12
+17      498     0.0     1       488 10
+18      479     0.0     1       471 8
+19      561     0.0     1       549 12
+20      557     0.0     2       541 14 2
+21      616     0.0     2       591 20 5
+22      626     0.0     2       608 17 1
+23      816     0.0     2       795 16 5
+24      1041    0.0     2       1004 33 4
+25      1347    0.0     2       1290 52 5
+26      3270    0.0     2       3162 94 14
+27      2979    0.0     2       2867 101 11
+28      5654    0.0     2       5434 201 19
+29      6189    0.0     2       5911 262 16
+30      11515   0.0     2       11011 460 44
+31      37047   0.0     2       35612 1322 113
+32      138518  0.0     2       133276 4812 430
+33      113793  0.0     2       109987 3492 314
+34      72991   0.0     2       70515 2234 242
+35      80063   0.0     2       77643 2195 225
+36      92938   0.0     2       90166 2497 275
+37      78619   0.0     2       76504 1912 203
+38      110466  0.0     2       107676 2538 252
+39      134998  0.0     2       131433 3204 361
+40      187145  0.0     2       182800 3945 400
+41      298337  0.0     2       291571 6102 664
+42      649939  0.0     2       636035 12571 1333
+43      1737975 0.0     2       1702490 32150 3335
+44      1224792 0.0     2       1197647 24364 2781
+45      668877  0.0     2       654460 13096 1321
+46      557184  0.0     2       544664 11212 1308
+47      602187  0.0     2       583364 17394 1429
+48      711765  0.0     2       696215 14234 1316
+49      696045  0.0     2       681673 13044 1328
+50      846984  0.0     2       830436 15156 1392
+51      882012  0.0     2       865943 14774 1295
+52      938953  0.0     2       921372 16231 1350
+53      981538  0.0     2       963091 16995 1452
+54      993879  0.0     2       976048 16458 1373
+55      956888  0.0     2       939507 16034 1347
+56      837993  0.0     2       822973 13782 1238
+57      784397  0.0     2       770982 12444 971
+58      552835  0.0     2       543442 8716 677
+59      430457  0.0     2       423434 6530 493
+60      249946  0.0     2       245770 3911 265
+61      102393  0.0     2       100699 1563 131
+62      35366   0.0     2       34771 550 45
+63      10156   0.0     2       9908 237 11
+64      19054   0.0     2       18705 331 18
+65      29693   0.0     2       21256 5255 3182
+
+```
+
+
+### <a name = "2.3"> 2.3 Removing 3' Adapter </a>
+
+
+```bash
+
+# to remove 3' varaible Adapter. Everything matching to the Adapter sequence and all bases after it will be removed (works
+# perfectly where the 3' Adapter starts with a fixed 20nt index seq TGGAATTCTCGGGTGCCAAG, and contains a variable
+# Adapter/primer lenght after)
+
+cutadapt -a adapterEQUENCE -o output.fastq input.fastq
+
+cutadapt -a TGGAATTCTCGGGTGCCAAG -o trimmed_M20072.fastq M20072_1_75bp_4_lanes.merge_chastity_passed.fastq.gz 
+
+This is cutadapt 1.18 with Python 3.7.11
+Command line parameters: -a TGGAATTCTCGGGTGCCAAG -o trimmed_M20072.fastq M20072_1_75bp_4_lanes.merge_chastity_passed.fastq.gz
+Processing reads on 1 core in single-end mode ...
+Finished in 259.27 s (15 us/read; 4.00 M reads/minute).
+
+=== Summary ===
+  
+  Total reads processed:              17,299,822
+Reads with adapters:                16,980,740 (98.2%)
+Reads written (passing filters):    17,299,822 (100.0%)
+
+Total basepairs processed: 1,297,486,650 bp
+Total written (filtered):    460,834,376 bp (35.5%)
+
+=== Adapter 1 ===
+  
+  Sequence: TGGAATTCTCGGGTGCCAAG; Type: regular 3'; Length: 20; Trimmed: 16980740 times.
+
+No. of allowed errors:
+0-9 bp: 0; 10-19 bp: 1; 20 bp: 2
+
+Bases preceding removed adapters:
+  A: 17.1%
+  C: 26.5%
+  G: 28.0%
+  T: 28.3%
+  none/other: 0.2%
+
+Overview of removed sequences
+length  count   expect  max.err error counts
+3       4704    270309.7        0       4704
+4       976     67577.4 0       976
+5       346     16894.4 0       346
+6       330     4223.6  0       330
+7       286     1055.9  0       286
+8       247     264.0   0       247
+9       298     66.0    0       296 2
+10      254     16.5    1       251 3
+11      326     4.1     1       324 2
+12      407     1.0     1       398 9
+13      399     0.3     1       387 12
+14      772     0.1     1       749 23
+15      657     0.0     1       643 14
+16      470     0.0     1       458 12
+17      498     0.0     1       488 10
+18      479     0.0     1       471 8
+19      561     0.0     1       549 12
+20      557     0.0     2       541 14 2
+21      616     0.0     2       591 20 5
+22      626     0.0     2       608 17 1
+23      816     0.0     2       795 16 5
+24      1041    0.0     2       1004 33 4
+25      1347    0.0     2       1290 52 5
+26      3270    0.0     2       3162 94 14
+27      2979    0.0     2       2867 101 11
+28      5654    0.0     2       5434 201 19
+29      6189    0.0     2       5911 262 16
+30      11515   0.0     2       11011 460 44
+31      37047   0.0     2       35612 1322 113
+32      138518  0.0     2       133276 4812 430
+33      113793  0.0     2       109987 3492 314
+34      72991   0.0     2       70515 2234 242
+35      80063   0.0     2       77643 2195 225
+36      92938   0.0     2       90166 2497 275
+37      78619   0.0     2       76504 1912 203
+38      110466  0.0     2       107676 2538 252
+39      134998  0.0     2       131433 3204 361
+40      187145  0.0     2       182800 3945 400
+41      298337  0.0     2       291571 6102 664
+42      649939  0.0     2       636035 12571 1333
+43      1737975 0.0     2       1702490 32150 3335
+44      1224792 0.0     2       1197647 24364 2781
+45      668877  0.0     2       654460 13096 1321
+46      557184  0.0     2       544664 11212 1308
+47      602186  0.0     2       583364 17394 1428
+48      711765  0.0     2       696215 14234 1316
+49      696045  0.0     2       681673 13044 1328
+50      846984  0.0     2       830436 15156 1392
+51      882012  0.0     2       865943 14774 1295
+52      938953  0.0     2       921372 16231 1350
+53      981538  0.0     2       963091 16995 1452
+54      993879  0.0     2       976048 16458 1373
+55      956888  0.0     2       939507 16034 1347
+56      837993  0.0     2       822973 13782 1238
+57      784397  0.0     2       770982 12444 971
+58      552835  0.0     2       543442 8716 677
+59      430457  0.0     2       423434 6530 493
+60      249946  0.0     2       245770 3911 265
+61      102393  0.0     2       100699 1563 131
+62      35366   0.0     2       34771 550 45
+63      10156   0.0     2       9908 237 11
+64      19052   0.0     2       18705 331 16
+65      21636   0.0     2       21256 352 28
+66      4976    0.0     2       4869 95 12
+67      3143    0.0     2       2441 672 30
+68      2567    0.0     2       1591 943 33
+69      2735    0.0     2       1801 883 51
+70      819     0.0     2       492 316 11
+71      2599    0.0     2       1408 1136 55
+72      1685    0.0     2       510 175 1000
+73      1718    0.0     2       165 101 1452
+74      39261   0.0     2       92 247 38922
+75      36454   0.0     2       87 635 35732
+
+```
+
+### <a name = "2.4"> 2.4 Removing 5' Fixed Nucleotides  </a> 
+
+
+```bash
+
+# to remove n no. of bases from the start of the read (e.g. for the 8bp UMI and 2 CA nt at the start of each read).
+
+cutadapt -cut No.of.nucleotides -o output.fastq input.fastq
+
+cutadapt --cut 10 -o trimmed_M20072_5prime.fastq M20072_1_75bp_4_lanes.merge_chastity_passed.fastq.gz 
+
+
+
+This is cutadapt 1.18 with Python 3.7.11
+Command line parameters: --cut 10 -o trimmed_M20072_5prime.fastq M20072_1_75bp_4_lanes.merge_chastity_passed.fastq.gz
+Processing reads on 1 core in single-end mode ...
+Finished in 94.13 s (5 us/read; 11.03 M reads/minute).
+
+=== Summary ===
+
+Total reads processed:              17,299,822
+Reads with adapters:                         0 (0.0%)
+Reads written (passing filters):    17,299,822 (100.0%)
+
+Total basepairs processed: 1,297,486,650 bp
+Total written (filtered):  1,124,488,430 bp (86.7%)
+
+```
+
+### 2.5 Keeping Sequences with Mininum length of 17: Trimmomatic  
+
+This step is required because cutadapt retains empty sequences with 0 bases by default. Need to remove them before perfoming alignment either manually or by miRMaster.  
+
+
+```bash
+
+source deactivate
+
+#create new env to run trimmomatic
+conda create --name trimmomatic
+
+#activate env
+source activate trimmomatic
+
+#for one file
+trimmomatic SE -threads 5 trimmed_M20072.fastq trimmomatic/M20072_trimmed_min17.fastq MINLEN:17
+
+#for multiple files
+
+for file in *.fastq.gz; do trimmomatic SE -threads 5 ${file} trimmomatic/trimmed_min17_${file} -trimlog log MINLEN:17; done
+
+```
+
+***  
+
+## 3.0 Raw FASTQ to Aligned BAM  
+
+Once you've processed and trimmed your FASTQ files, they're nwo ready to be aligned to the genome  
+
+### 3.1 Download Reference genome
+
+From [Encode](https://www.gencodegenes.org/human/), download the the latest version of the  
+
+- human reference genome build (.fasta / .fa)
+- Optional but highly recommended: genome annotation file (.gtf)  
+
+**Make sure to download both the files from the same source, and do not mix and match (i.e., one from UCSC and one from ENCODE do not align)**  
+
+
+### 3.2 Install Miniconda  
+
+**1. Install Conda via miniconda**:  
+
+[Option 1](https://waylonwalker.com/install-miniconda/) / [Option 2](https://dev.to/waylonwalker/installing-miniconda-on-linux-from-the-command-line-4ad7)  
+
+**2. [Set up bioconda channels](http://bioconda.github.io/user/install.html#set-up-channels)**    
+
+**3. Make a new environment** to work in (let's call this one snowflakes)  
+
+
+```bash
+
+conda create --name snowflakes
+
+```
+  
+**4. Activate your environment**
+
+
+```bash
+
+source activate snowflakes
+
+```
+
+**5. Install [`samtools`](http://www.sthda.com/english/wiki/install-samtools-on-unix-system)**   
+
+***  
+
+### 3.3 Sequence Alignment to Genome  
+
+> Alignment of sequences to the reference genome contains 2 steps: 
+
+1. Make an index of the genome (only need to perform this step once per genome-annotation pair file)
+2. Align your sequences using the indexed genome  
+
+***  
+
+#### 3.3.1 Alignment using STAR  
+
+
+**1. Install STAR**   
+
+
+```bash
+
+conda install -c bioconda star
+STAR --help
+
+```
+  
+**2. Check number of available threads**  
+
+
+```bash
+
+lscpu
+#multiply number of sockets by number of cores by number of threads
+
+```
+
+**3. Make directory to store index**   
+
+
+```bash
+
+mkdir hg38_index_STAR
+
+```
+ 
+**4. Make index from genome using STAR**  
+
+
+```bash
+
+STAR --runThreadN 10 --runMode genomeGenerate --genomeDir hg38_index_STAR --genomeFastaFiles GRCh38_latest_genomic.fna --sjdbGTFfile gencode.v38.annotation.gtf
+
+```
+
+ --genomeDir = directory to store indexed files
+ --genomeFastaFiles = reference genome fasta file
+ --sjdbGTFfile = GTF annotation file --> optional, but useful
+
+**5. Align trimmed fastq files**  
+
+The below are the most basic minimum commands you can use for alignment. Several detailed commands exist, whcih you can view in the [STAR manual here](https://physiology.med.cornell.edu/faculty/skrabanek/lab/angsd/lecture_notes/STARmanual.pdf)
+
+
+```bash
+
+mkdir mapped_files
+
+STAR --runThreadN 30 --genomeDir hg38_index_STAR --readFilesIn trimmed_fastq_file.fastq --outFilterIntronMotifs RemoveNoncanonical --outFileNamePrefix mapped_files/mapped_ --outSAMtype BAM SortedByCoordinate
+
+```
+
+ `--genomeDir` = directory where indexed files are stored --> different from above!  
+ `--readFilesIn` = trimmed fastq files  
+ `--outFilterIntronMotifs` RemoveNoncanonical = Removing any SNV variations  
+ `--outFileNamePrefix` = prefix to add to mapped files  
+ `--outSAMtype` BAM = SAM or BAM output file (here BAM and SortedByCoordinate)  
+ 
+ > The output will be a sorted BAM file (from which you can generate expression counts in R using the `featureCounts` function from the `{Rsubread}` package, 3 log files displaying the detailed steps of processing and their output, and a SJ.out.tab file with any splice junctions)  
+ 
+ ***  
+ 
+#### 3.3.2 Alignment using Bowtie  {.tabset}
+
+**1. Install Bowtie**   
+
+
+```bash
+
+conda install bowtie
+
+```
+
+**2. Make directory to store index**   
+
+
+```bash
+
+mkdir hg38_index_bowtie
+
+```
+
+**3. Make index from genome using bowtie**  
+
+4 files will be output, and you can specify a prefix. Here, I'm using *hg38_bowtie* as the prefix for the indexed files  
+
+##### Code  
+
+
+```bash
+
+bowtie-build GRCh38_latest_genomic.fna hg38_index_bowtie/hg38_bowtie
+
+```
+
+***  
+
+##### Output of Code:  
+
+Command: bowtie-build /home/BCRICWH.LAN/nikita.telkar/RobinsonLab/Nikita/Projects/hg38_build/GRCh38_latest_genomic.fna   /home/BCRICWH.LAN/nikita.telkar/RobinsonLab/Nikita/Projects/hg38_build/bowtie_index/hg38_bowtie   
+ild/GRCh38_latest_genomic.fna ~/RobinsonLab/Nikita/Projects/hg38_build/hg38_index_bowtie/hg38_bowtie  
+Settings:  
+  Output files: "/home/BCRICWH.LAN/nikita.telkar/RobinsonLab/Nikita/Projects/hg38_build/hg38_index_bowtie/hg38_bowtie.*.ebwt"  
+  Line rate: 6 (line is 64 bytes)  
+  Lines per side: 1 (side is 64 bytes)  
+  Offset rate: 5 (one in 32)  
+  FTable chars: 10  
+  Strings: unpacked  
+  Max bucket size: default  
+  Max bucket size, sqrt multiplier: default  
+  Max bucket size, len divisor: 4  
+  Difference-cover sample period: 1024  
+  Endianness: little  
+  Actual local endianness: little  
+  Sanity checking: disabled  
+  Assertions: disabled  
+  Random seed: 0  
+  Sizeofs: void*:8, int:4, long:8, size_t:8  
+Input files DNA, FASTA:  
+  /home/BCRICWH.LAN/nikita.telkar/RobinsonLab/Nikita/Projects/hg38_build/GRCh38_latest_genomic.fna  
+Reading reference sizes  
+  Time reading reference sizes: 00:00:28  
+Calculating joined length  
+Writing header  
+Reserving space for joined string  
+Joining reference sequences  
+  Time to join reference sequences: 00:00:26  
+bmax according to bmaxDivN setting: 777680127  
+Using parameters --bmax 583260096 --dcv 1024  
+  Doing ahead-of-time memory usage test  
+  Passed!  Constructing with these parameters: --bmax 583260096 --dcv 1024  
+Constructing suffix-array element generator  
+Building DifferenceCoverSample  
+  Building sPrime  
+  Building sPrimeOrder  
+  V-Sorting samples  
+  V-Sorting samples time: 00:01:31  
+  Allocating rank array  
+  Ranking v-sort output  
+  Ranking v-sort output time: 00:00:24  
+  Invoking Larsson-Sadakane on ranks  
+  Invoking Larsson-Sadakane on ranks time: 00:00:45  
+  Sanity-checking and returning  
+Building samples  
+Reserving space for 12 sample suffixes  
+Generating random suffixes  
+QSorting 12 sample offsets, eliminating duplicates  
+QSorting sample offsets, eliminating duplicates time: 00:00:00  
+Multikey QSorting 12 samples  
+  (Using difference cover)  
+  Multikey QSorting samples time: 00:00:00  
+Calculating bucket sizes  
+  Binary sorting into buckets  
+  10%  
+  20%  
+  30%  
+  40%  
+  50%  
+  60%  
+  70%  
+  80%  
+  90%  
+  100%  
+  Binary sorting into buckets time: 00:01:47  
+Splitting and merging  
+  Splitting and merging time: 00:00:00  
+Avg bucket size: 4.44389e+08 (target: 583260095)  
+Converting suffix-array elements to index image  
+Allocating ftab, absorbFtab  
+Entering Ebwt loop  
+Getting block 1 of 7    
+  Reserving size (583260096) for bucket
+  Calculating Z arrays  
+  Calculating Z arrays time: 00:00:00  
+  Entering block accumulator loop:  
+  10%  
+  20%  
+  30%  
+  40%    
+  50%  
+  60%  
+  70%  
+  80%    
+  90%  
+  100%  
+  Block accumulator loop time: 00:00:25  
+  Sorting block of length 169758338  
+  (Using difference cover)  
+  Sorting block time: 00:02:22  
+Returning block of 169758339  
+Getting block 2 of 7  
+  Reserving size (583260096) for bucket  
+  Calculating Z arrays  
+  Calculating Z arrays time: 00:00:00  
+  Entering block accumulator loop:  
+  10%  
+  20%  
+  30%  
+  40%  
+  50%  
+  60%  
+  70%  
+  80%  
+  90%  
+  100%  
+  Block accumulator loop time: 00:00:32  
+  Sorting block of length 538401890  
+  (Using difference cover)  
+     
+  Sorting block time: 00:08:12  
+Returning block of 538401891  
+Getting block 3 of 7  
+  Reserving size (583260096) for bucket  
+  Calculating Z arrays  
+  Calculating Z arrays time: 00:00:00  
+  Entering block accumulator loop:  
+  10%  
+  20%  
+  30%  
+  40%  
+  50%  
+  60%  
+  70%  
+  80%  
+  90%  
+  100%  
+  Block accumulator loop time: 00:00:37  
+  Sorting block of length 515786210  
+  (Using difference cover)
+  
+    
+  Sorting block time: 00:07:49  
+Returning block of 515786211  
+Getting block 4 of 7  
+  Reserving size (583260096) for bucket  
+  Calculating Z arrays  
+  Calculating Z arrays time: 00:00:00  
+  Entering block accumulator loop:  
+  10%  
+  20%  
+  30%  
+  40%  
+  50%  
+  60%  
+  70%
+  80%
+  90%
+  100%
+  Block accumulator loop time: 00:00:37
+  Sorting block of length 324996043
+  (Using difference cover)
+  Sorting block time: 00:05:05
+Returning block of 324996044
+Getting block 5 of 7
+  Reserving size (583260096) for bucket
+  Calculating Z arrays
+  Calculating Z arrays time: 00:00:00
+  Entering block accumulator loop:
+  10%
+  20%
+  30%
+  40%
+  50%
+  60%
+  70%
+  80%
+  90%
+  100%
+  Block accumulator loop time: 00:00:46
+  Sorting block of length 578256032
+  (Using difference cover)
+
+  Sorting block time: 00:09:11
+Returning block of 578256033
+Getting block 6 of 7
+  Reserving size (583260096) for bucket
+  Calculating Z arrays
+  Calculating Z arrays time: 00:00:00
+  Entering block accumulator loop:
+  10%
+  20%
+  30%
+  40%
+  50%
+  60%
+  70%
+  80%
+  90%
+  100%
+  Block accumulator loop time: 00:00:42
+  Sorting block of length 504895348
+  (Using difference cover)
+
+  Sorting block time: 00:07:34
+Returning block of 504895349
+Getting block 7 of 7
+  Reserving size (583260096) for bucket
+  Calculating Z arrays
+  Calculating Z arrays time: 00:00:00
+  Entering block accumulator loop:
+  10%
+  20%
+  30%
+  40%
+  50%
+  60%
+  70%
+  80%
+  90%
+  100%
+  Block accumulator loop time: 00:00:31
+  Sorting block of length 478626644
+  (Using difference cover)
+
+
+  Sorting block time: 00:07:20
+Returning block of 478626645
+Exited Ebwt loop
+fchr[A]: 0
+fchr[C]: 915675177
+fchr[G]: 1552682063
+fchr[T]: 2192336340
+fchr[$]: 3110720511
+Exiting Ebwt::buildToDisk()
+Returning from initFromVector
+Wrote 893067012 bytes to primary EBWT file: /home/BCRICWH.LAN/nikita.telkar/RobinsonLab/Nikita/Projects/hg38_build/hg38_index_bowtie/hg38_bowtie.1.ebwt
+Wrote 388840068 bytes to secondary EBWT file: /home/BCRICWH.LAN/nikita.telkar/RobinsonLab/Nikita/Projects/hg38_build/hg38_index_bowtie/hg38_bowtie.2.ebwt
+Re-opening _in1 and _in2 as input streams
+Returning from Ebwt constructor
+Headers:
+    len: 3110720511
+    bwtLen: 3110720512
+    sz: 777680128
+    bwtSz: 777680128
+    lineRate: 6
+    linesPerSide: 1
+    offRate: 5
+    offMask: 0xffffffe0
+    isaRate: -1
+    isaMask: 0xffffffff
+    ftabChars: 10
+    eftabLen: 20
+    eftabSz: 80
+    ftabLen: 1048577
+    ftabSz: 4194308
+    offsLen: 97210016
+    offsSz: 388840064
+    isaLen: 0
+    isaSz: 0
+    lineSz: 64
+    sideSz: 64
+    sideBwtSz: 56
+    sideBwtLen: 224
+    numSidePairs: 6943573
+    numSides: 13887146
+    numLines: 13887146
+    ebwtTotLen: 888777344
+    ebwtTotSz: 888777344
+    reverse: 0
+Total time for call to driver() for forward index: 01:05:30
+Reading reference sizes
+
+  Time reading reference sizes: 00:00:26
+Calculating joined length
+Writing header
+Reserving space for joined string
+Joining reference sequences
+  Time to join reference sequences: 00:00:28
+bmax according to bmaxDivN setting: 777680127
+Using parameters --bmax 583260096 --dcv 1024
+  Doing ahead-of-time memory usage test
+  Passed!  Constructing with these parameters: --bmax 583260096 --dcv 1024
+Constructing suffix-array element generator
+Building DifferenceCoverSample
+  Building sPrime
+  Building sPrimeOrder
+  V-Sorting samples
+  V-Sorting samples time: 00:01:32
+  Allocating rank array
+  Ranking v-sort output
+  Ranking v-sort output time: 00:00:24
+  Invoking Larsson-Sadakane on ranks
+  Invoking Larsson-Sadakane on ranks time: 00:00:44
+  Sanity-checking and returning
+Building samples
+Reserving space for 12 sample suffixes
+Generating random suffixes
+QSorting 12 sample offsets, eliminating duplicates
+QSorting sample offsets, eliminating duplicates time: 00:00:00
+Multikey QSorting 12 samples
+  (Using difference cover)
+  Multikey QSorting samples time: 00:00:00
+Calculating bucket sizes
+  Binary sorting into buckets
+  10%
+  20%
+  30%
+  40%
+  50%
+  60%
+  70%
+  80%
+  90%
+  100%
+  Binary sorting into buckets time: 00:01:48
+Splitting and merging
+  Splitting and merging time: 00:00:00
+Split 2, merged 6; iterating...
+  Binary sorting into buckets
+  10%
+  20%
+  30%
+  40%
+  50%
+  60%
+  70%
+  80%
+  90%
+  100%
+  Binary sorting into buckets time: 00:01:38
+Splitting and merging
+  Splitting and merging time: 00:00:00
+Avg bucket size: 3.8884e+08 (target: 583260095)
+Converting suffix-array elements to index image
+Allocating ftab, absorbFtab
+Entering Ebwt loop
+Getting block 1 of 8
+  Reserving size (583260096) for bucket
+  Calculating Z arrays
+  Calculating Z arrays time: 00:00:00
+  Entering block accumulator loop:
+  10%
+  20%
+  30%
+  40%
+  50%
+  60%
+  70%
+  80%
+  90%
+  100%
+  Block accumulator loop time: 00:00:25
+  Sorting block of length 201730821
+  (Using difference cover)
+
+
+  Sorting block time: 00:02:54
+Returning block of 201730822
+Getting block 2 of 8
+  Reserving size (583260096) for bucket
+  Calculating Z arrays
+  Calculating Z arrays time: 00:00:00
+  Entering block accumulator loop:
+  10%
+  20%
+  30%
+  40%
+  50%
+  60%
+  70%
+  80%
+  90%
+  100%
+  Block accumulator loop time: 00:00:31
+  Sorting block of length 530945282
+  (Using difference cover)
+  Sorting block time: 00:08:10
+Returning block of 530945283
+Getting block 3 of 8
+  Reserving size (583260096) for bucket
+  Calculating Z arrays
+  Calculating Z arrays time: 00:00:00
+  Entering block accumulator loop:
+  10%
+  20%
+  30%
+  40%
+  50%
+  60%
+  70%
+  80%
+  90%
+  100%
+  Block accumulator loop time: 00:00:36
+  Sorting block of length 352660802
+  (Using difference cover)
+  Sorting block time: 00:05:10
+Returning block of 352660803
+Getting block 4 of 8
+  Reserving size (583260096) for bucket
+  Calculating Z arrays
+  Calculating Z arrays time: 00:00:00
+  Entering block accumulator loop:
+  10%
+  20%
+  30%
+  40%
+  50%
+  60%
+  70%
+  80%
+  90%
+  100%
+  Block accumulator loop time: 00:00:41
+  Sorting block of length 475306913
+  (Using difference cover)
+  Sorting block time: 00:07:32
+Returning block of 475306914
+Getting block 5 of 8
+  Reserving size (583260096) for bucket
+  Calculating Z arrays
+  Calculating Z arrays time: 00:00:00
+  Entering block accumulator loop:
+  10%
+  20%
+  30%
+  40%
+  50%
+  60%
+  70%
+  80%
+  90%
+  100%
+  Block accumulator loop time: 00:00:40
+  Sorting block of length 481594628
+  (Using difference cover)
+  Sorting block time: 00:07:37
+Returning block of 481594629
+Getting block 6 of 8
+  Reserving size (583260096) for bucket
+  Calculating Z arrays
+  Calculating Z arrays time: 00:00:00
+  Entering block accumulator loop:
+  10%
+  20%
+  30%
+  40%
+  50%
+  60%
+  70%
+  80%
+  90%
+  100%
+  Block accumulator loop time: 00:00:42
+  Sorting block of length 352760181
+  (Using difference cover)
+  Sorting block time: 00:05:20
+Returning block of 352760182
+Getting block 7 of 8
+  Reserving size (583260096) for bucket
+  Calculating Z arrays
+  Calculating Z arrays time: 00:00:00
+  Entering block accumulator loop:
+  10%
+  20%
+  30%
+  40%
+  50%
+  60%
+  70%
+  80%
+  90%
+  100%
+  Block accumulator loop time: 00:00:39
+  Sorting block of length 521669441
+  (Using difference cover)
+  Sorting block time: 00:08:01
+Returning block of 521669442
+Getting block 8 of 8
+  Reserving size (583260096) for bucket
+  Calculating Z arrays
+  Calculating Z arrays time: 00:00:00
+  Entering block accumulator loop:
+  10%
+  20%
+  30%
+  40%
+  50%
+  60%
+  70%
+  80%
+  90%
+  100%
+  Block accumulator loop time: 00:00:28
+  Sorting block of length 194052436
+  (Using difference cover)
+  Sorting block time: 00:02:49
+Returning block of 194052437
+Exited Ebwt loop
+fchr[A]: 0
+fchr[C]: 915675177
+fchr[G]: 1552682063
+fchr[T]: 2192336340
+fchr[$]: 3110720511
+Exiting Ebwt::buildToDisk()
+Returning from initFromVector
+Wrote 893067012 bytes to primary EBWT file: /home/BCRICWH.LAN/nikita.telkar/RobinsonLab/Nikita/Projects/hg38_build/hg38_index_bowtie/hg38_bowtie.rev.1.ebwt
+Wrote 388840068 bytes to secondary EBWT file: /home/BCRICWH.LAN/nikita.telkar/RobinsonLab/Nikita/Projects/hg38_build/hg38_index_bowtie/hg38_bowtie.rev.2.ebwt
+Re-opening _in1 and _in2 as input streams
+Returning from Ebwt constructor
+Headers:
+    len: 3110720511
+    bwtLen: 3110720512
+    sz: 777680128
+    bwtSz: 777680128
+    lineRate: 6
+    linesPerSide: 1
+    offRate: 5
+    offMask: 0xffffffe0
+    isaRate: -1
+    isaMask: 0xffffffff
+    ftabChars: 10
+    eftabLen: 20
+    eftabSz: 80
+    ftabLen: 1048577
+    ftabSz: 4194308
+    offsLen: 97210016
+    offsSz: 388840064
+    isaLen: 0
+    isaSz: 0
+    lineSz: 64
+    sideSz: 64
+    sideBwtSz: 56
+    sideBwtLen: 224
+    numSidePairs: 6943573
+    numSides: 13887146
+    numLines: 13887146
+    ebwtTotLen: 888777344
+    ebwtTotSz: 888777344
+    reverse: 0
+Total time for backward call to driver() for mirror index: 01:07:38
+
+
+***  
+
+## {.unlisted .unnumbered}
+
+**4. Align trimmed fastq files**  
+
+
+```bash
+
+bowtie -S hg38_index_bowtie/hg38_bowtie trimmed_fastq_file.fastq trimmed.sam
+
+```
+
+- S = output in SAM format
+hg38_index_bowtie/hg38_bowtie = path + prefix of the indexed files (hg38_index_bowtie/hg38_bowtie) + name of the output SAM file (trimmed.sam)  
+
+**Output:**  
+
+reads processed: 13326678
+reads with at least one reported alignment: 13102098 (98.31%)
+reads that failed to align: 224580 (1.69%)
+Reported 13102098 alignments to 1 output stream(s)
+  
+  
+**5. Use `samtools` to convert the SAM file to BAM**  
+
+
+
+```bash
+
+samtools view -b trimmed.sam -o trimmed.bam
+
+```
+
+**6. Sort the BAM file by genomic coordinates**  
+
+
+```bash
+
+samtools sort trimmed.bam -o trimmed_sorted.bam
+
+```
+
+***  
+
+#### 3.4  Generate index file  
+
+To visualize a BAM file in the IGV software, a corresponding index file (.bam.bai) is required
+
+
+```bash
+
+samtools index trimmed_sorted.bam
+
+```
+
+
+
+***  
+
+
+## 4.0 Converting BAM files to FASTQ
+
+
+```bash
+
+# install samtools: http://www.sthda.com/english/wiki/install-samtools-on-unix-system  
+
+# for one file
+samtools fastq bamfile.bam > name_of_fastq_file.fastq
+
+# for multiple files
+for file in *.bam; do samtools fastq $file > ${file//.bam/.fastq}; done
+
+```
+
+***  
+
+## 5.0 Bulk renaming of files using `Windows Powershell`.  
+
+The sequencing files from the GSC come with the suffix *_1_75bp_4_lanes.merge_chastity_passed*. To remove, do the following in [Windows Powershell](https://www.windowscentral.com/how-rename-multiple-files-bulk-windows-10#rename-files-using-powershell):  
+
+
+```bash
+
+#change to working directory
+cd /d E:
+
+ls | Rename-Item -NewName {$_.name -replace "_1_75bp_4_lanes.merge_chastity_passed", ""}
+
+```
+
+To remove the last few characters, use:
+
+
+```bash
+
+Get-ChildItem | rename-item -newname { $_.name.substring(0,$_.name.length-6) } 
+# where -6 is 6 letters to be removed from the end
+
+```
+
+
+Similarly, you can remove any of the prexifes supplied while trimming the files.  
+
+***  
+
+
+
+
+
+
+
+## 6.0 BAM to Expression Read Count Files
+
+Once you have your BAM files, extracting the counts for your reads (i.e. how many times was a particular transcript was  sequenced) is straightforward, and you can do it in R itself using the [{Rsubread} package](chrome-extension://efaidnbmnnnibpcajpcglclefindmkaj/https://bioconductor.org/packages/release/bioc/vignettes/Rsubread/inst/doc/SubreadUsersGuide.pdf)  
+
+Check all of the available arguments and options available for the featureCounts function by running `?featureCounts` in your console  
+  
+
+
+```r
+library(Rsubread)
+
+aligned <- featureCounts(here::here("data", "your_BAM_file.bam"), annot.inbuilt = "hg19", isPairedEnd = TRUE)
+```
+![Output you'll get by running featurecounts](https://raw.githubusercontent.com/nikita-telkar/PHB/main/static/featurecounts_output.png)
+
+
+```r
+expression_counts <- aligned$counts
+
+head(counts)
+```
+
+
+```r
+knitr::include_graphics("Z:/Nikita/Misc_R_Scripts/featurecounts_head.png", error = FALSE)
+```
+
+<img src="featurecounts_head.png" width="236" />
+
